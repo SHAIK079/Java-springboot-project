@@ -61,7 +61,7 @@ jobs:
 
             APP_DIR=/home/ec2-user/front
             REPO_NAME=Java-springboot-project
-            REPO_URL=https://github.com/CloudTechDevOps/Java-springboot-project.git
+            REPO_URL=https://github.com/SHAIK079/Java-springboot-project.git
 
             echo "🚀 Starting deployment..."
 
@@ -122,7 +122,6 @@ jobs:
       ######################################################
       # Email Notification
       ######################################################
-
       # - name: 📧 Send Deployment Report
       #   if: success() || failure()
       #   uses: dawidd6/action-send-mail@v3
@@ -152,8 +151,8 @@ jobs:
       #       SonarQube Analysis : Completed
       #       Quality Gate       : Passed
 
-            # Deployment Target  : EC2
-            # Frontend URL       : http://${{ secrets.EC2_HOST }}:8501
+      #       Deployment Target  : EC2
+      #       Frontend URL       : http://${{ secrets.EC2_HOST }}:8501
 
-            # Regards,
-            # GitHub Actions
+      #       Regards,
+      #       GitHub Actions
