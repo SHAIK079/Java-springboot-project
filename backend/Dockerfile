@@ -1,30 +1,48 @@
 
-## Optimizing image example ##
-# Stage 1 — Build JAR
 FROM maven:3.9.9-amazoncorretto-11 AS builder
+
 WORKDIR /app
-COPY . /app
+
+COPY . .
+
 RUN mvn clean package -Dspring.profiles.active=build -DskipTests
 
-# Stage 2 — Run JAR
 FROM amazoncorretto:11-alpine-jdk
+
 WORKDIR /app
 
-# Copy the built JAR from the builder stage
 COPY --from=builder /app/target/*.jar app.jar
 
-# Set default environment variables (can be overridden at runtime)
-ENV SPRING_DATASOURCE_URL="jdbc:mysql://book-rds.c4fo8m6c0ute.us-east-1.rds.amazonaws.com:3306/datastore?createDatabaseIfNotExist=true"
-ENV SPRING_DATASOURCE_USERNAME="admin"
-ENV SPRING_DATASOURCE_PASSWORD="Shaiksami123"
-ENV SPRING_JPA_HIBERNATE_DDL_AUTO="update"
-# ENV SERVER_PORT=8084
-
-# Expose the port (optional)
 EXPOSE 8084
 
-# Start the application
-CMD ["java", "-jar", "app.jar"]
+CMD ["java", "-jar", "app.jar"] 
+
+## Optimizing image example ##
+# # Stage 1 — Build JAR
+# FROM maven:3.9.9-amazoncorretto-11 AS builder
+# WORKDIR /app
+# COPY . /app
+# RUN mvn clean package -Dspring.profiles.active=build -DskipTests
+
+# # Stage 2 — Run JAR
+# FROM amazoncorretto:11-alpine-jdk
+# WORKDIR /app
+
+# # Copy the built JAR from the builder stage
+# COPY --from=builder /app/target/*.jar app.jar
+
+# # Set default environment variables (can be overridden at runtime)
+# ENV SPRING_DATASOURCE_URL="jdbc:mysql://book-rds.c4fo8m6c0ute.us-east-1.rds.amazonaws.com:3306/datastore?createDatabaseIfNotExist=true"
+# ENV SPRING_DATASOURCE_USERNAME="admin"
+# ENV SPRING_DATASOURCE_PASSWORD="Shaiksami123"
+# ENV SPRING_JPA_HIBERNATE_DDL_AUTO="update"
+# # ENV SERVER_PORT=8084
+
+# # Expose the port (optional)
+# EXPOSE 8084
+
+# # Start the application
+# CMD ["java", "-jar", "app.jar"]
 
 
 
