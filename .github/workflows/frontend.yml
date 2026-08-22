@@ -9,12 +9,12 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: 937492564736.dkr.ecr.us-east-1.amazonaws.com/img1
+  ECR_REGISTRY: 937492564736.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REPOSITORY: img1
   CONTAINER_NAME: frontend
   CONTAINER_PORT: 8501
 
 jobs:
-
   build-push-deploy:
 
     runs-on: ubuntu-latest
@@ -30,7 +30,7 @@ jobs:
 
 
       # ==========================================
-      # 2. Configure AWS using OIDC
+      # 2. Configure AWS Credentials using OIDC
       # ==========================================
 
       - name: Configure AWS Credentials
@@ -56,37 +56,39 @@ jobs:
         working-directory: frontend
         run: |
           docker build \
-            -t $ECR_REPOSITORY:${{ github.sha }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
             .
 
 
       # ==========================================
-      # 5. Push Image to ECR
+      # 5. Push Frontend Image to ECR
       # ==========================================
 
       - name: Push Frontend Image to ECR
         run: |
           docker push \
-            $ECR_REPOSITORY:${{ github.sha }}
+            $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
 
 
       # ==========================================
-      # 6. Deploy Container to EC2
+      # 6. Deploy Frontend Container to Frontend EC2
       # ==========================================
 
-      - name: Deploy Frontend Container
+      - name: Deploy Frontend to EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.FRONTEND_EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_KEY }}
+          key: ${{ secrets.FRONTEND_EC2_KEY }}
 
           script: |
             set -e
 
-            echo "================================="
-            echo "Logging into Amazon ECR"
-            echo "================================="
+            echo "=========================================="
+            echo "Starting Frontend Deployment"
+            echo "=========================================="
+
+            echo "Logging into Amazon ECR..."
 
             aws ecr get-login-password \
               --region us-east-1 \
@@ -96,26 +98,20 @@ jobs:
               937492564736.dkr.ecr.us-east-1.amazonaws.com
 
 
-            echo "================================="
-            echo "Pulling Frontend Image"
-            echo "================================="
+            echo "Pulling Frontend Docker Image..."
 
             docker pull \
               937492564736.dkr.ecr.us-east-1.amazonaws.com/img1:${{ github.sha }}
 
 
-            echo "================================="
-            echo "Stopping Old Container"
-            echo "================================="
+            echo "Stopping old frontend container..."
 
             docker stop frontend || true
 
             docker rm frontend || true
 
 
-            echo "================================="
-            echo "Starting Frontend Container"
-            echo "================================="
+            echo "Starting new frontend container..."
 
             docker run -d \
               --name frontend \
@@ -125,48 +121,116 @@ jobs:
               937492564736.dkr.ecr.us-east-1.amazonaws.com/img1:${{ github.sha }}
 
 
-            echo "================================="
-            echo "Deployment Completed"
-            echo "================================="
+            echo "=========================================="
+            echo "Frontend Container Started"
+            echo "=========================================="
+
+            docker ps
 
 
       # ==========================================
-      # 7. Wait for Container
+      # 7. Wait for Streamlit
       # ==========================================
 
-      - name: Wait for Frontend
+      - name: Wait for Frontend Startup
         uses: appleboy/ssh-action@v1.1.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.FRONTEND_EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_KEY }}
+          key: ${{ secrets.FRONTEND_EC2_KEY }}
 
           script: |
+            echo "Waiting for Streamlit application..."
             sleep 10
 
 
       # ==========================================
-      # 8. Verify Container
+      # 8. Verify Frontend Container
       # ==========================================
 
       - name: Verify Frontend
         uses: appleboy/ssh-action@v1.1.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.FRONTEND_EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_KEY }}
+          key: ${{ secrets.FRONTEND_EC2_KEY }}
 
           script: |
             set -e
 
-            echo "Running containers:"
+            echo "=========================================="
+            echo "Docker Container Status"
+            echo "=========================================="
+
             docker ps
 
-            echo "Frontend logs:"
+
+            echo "=========================================="
+            echo "Frontend Container Logs"
+            echo "=========================================="
+
             docker logs frontend --tail 50
 
-            echo "Checking frontend port:"
-            curl -I http://localhost:8501
+
+            echo "=========================================="
+            echo "Frontend Health Check"
+            echo "=========================================="
+
+            curl -f http://localhost:8501
+
+            echo ""
+
+            echo "=========================================="
+            echo "Frontend Deployment Successful!"
+            echo "=========================================="
+
+
+      # ==========================================
+      # 9. Deployment Report
+      # ==========================================
+
+      - name: Send Deployment Report
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: Frontend Deployment Report - ${{ github.repository }}
+          to: ${{ secrets.EMAIL_TO }}
+          from: ${{ secrets.EMAIL_USERNAME }}
+
+          body: |
+            Frontend Deployment Report
+
+            Repository: ${{ github.repository }}
+
+            Branch: ${{ github.ref_name }}
+
+            Commit: ${{ github.sha }}
+
+            Status: ${{ job.status }}
+
+            Actor: ${{ github.actor }}
+
+            Workflow: ${{ github.workflow }}
+
+            ECR Repository:
+            937492564736.dkr.ecr.us-east-1.amazonaws.com/img1
+
+            Image Tag:
+            ${{ github.sha }}
+
+            Frontend EC2:
+            ${{ secrets.FRONTEND_EC2_HOST }}
+
+            Container:
+            frontend
+
+            Port:
+            8501
 
 
 
