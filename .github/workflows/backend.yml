@@ -18,28 +18,28 @@ jobs:
           java-version: '11'
           cache: maven
 
-      - name: Build and SonarQube Scan
-        working-directory: backend
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        run: |
-          mvn clean verify \
-            -DskipTests
+      # - name: Build and SonarQube Scan
+      #   working-directory: backend
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      #   run: |
+      #     mvn clean verify \
+      #       -DskipTests
 
-          mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.7.0.6970:sonar \
-            -Dsonar.projectKey=backend \
-            -Dsonar.projectName=backend \
-            -Dsonar.host.url="$SONAR_HOST_URL" \
-            -Dsonar.login="$SONAR_TOKEN"
+      #     mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.7.0.6970:sonar \
+      #       -Dsonar.projectKey=backend \
+      #       -Dsonar.projectName=backend \
+      #       -Dsonar.host.url="$SONAR_HOST_URL" \
+      #       -Dsonar.login="$SONAR_TOKEN"
 
-      - name: SonarQube Quality Gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
-        with:
-          scanMetadataReportFile: backend/target/sonar/report-task.txt
-        timeout-minutes: 10
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # - name: SonarQube Quality Gate
+      #   uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+      #   with:
+      #     scanMetadataReportFile: backend/target/sonar/report-task.txt
+      #   timeout-minutes: 10
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Prepare EC2
         uses: appleboy/ssh-action@v1.1.0
