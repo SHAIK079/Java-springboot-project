@@ -1,158 +1,332 @@
-name: Frontend to EC2
+name: Frontend - Build, Push to ECR & Deploy
 
 on:
-  # push:
-  #   branches:
-  #     - main
-
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: 937492564736.dkr.ecr.us-east-1.amazonaws.com/img1
+  CONTAINER_NAME: frontend
+  CONTAINER_PORT: 8501
+
 jobs:
-  deploy:
+
+  build-push-deploy:
+
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==========================================
+      # 1. Checkout Repository
+      # ==========================================
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      ######################################################
-      # SonarQube Scan
-      ######################################################
 
-      # - name: Set up Java
-      #   uses: actions/setup-java@v4
-      #   with:
-      #     distribution: temurin
-      #     java-version: 17
+      # ==========================================
+      # 2. Configure AWS using OIDC
+      # ==========================================
 
-      # - name: SonarQube Scan
-      #   uses: SonarSource/sonarqube-scan-action@v5
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      #   with:
-      #     args: >
-      #       -Dsonar.projectKey=frontend
-      #       -Dsonar.projectName=frontend
-      #       -Dsonar.sources=frontend
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      # ######################################################
-      # # Quality Gate
-      # ######################################################
 
-      # - name: SonarQube Quality Gate
-      #   uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
-      #   timeout-minutes: 10
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # ==========================================
+      # 3. Login to Amazon ECR
+      # ==========================================
 
-      ######################################################
-      # Deploy
-      ######################################################
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Deploy via SSH
+
+      # ==========================================
+      # 4. Build Frontend Docker Image
+      # ==========================================
+
+      - name: Build Frontend Docker Image
+        working-directory: frontend
+        run: |
+          docker build \
+            -t $ECR_REPOSITORY:${{ github.sha }} \
+            .
+
+
+      # ==========================================
+      # 5. Push Image to ECR
+      # ==========================================
+
+      - name: Push Frontend Image to ECR
+        run: |
+          docker push \
+            $ECR_REPOSITORY:${{ github.sha }}
+
+
+      # ==========================================
+      # 6. Deploy Container to EC2
+      # ==========================================
+
+      - name: Deploy Frontend Container
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_KEY }}
+
           script: |
             set -e
 
-            APP_DIR=/home/ec2-user/front
-            REPO_NAME=Java-springboot-project
-            REPO_URL=https://github.com/SHAIK079/Java-springboot-project.git
+            echo "================================="
+            echo "Logging into Amazon ECR"
+            echo "================================="
 
-            echo "🚀 Starting deployment..."
+            aws ecr get-login-password \
+              --region us-east-1 \
+              | docker login \
+              --username AWS \
+              --password-stdin \
+              937492564736.dkr.ecr.us-east-1.amazonaws.com
 
-            mkdir -p $APP_DIR
-            cd $APP_DIR
 
-            if [ -d "$REPO_NAME/.git" ]; then
-              cd $REPO_NAME
-              git reset --hard
-              git pull origin main
-            else
-              git clone $REPO_URL
-              cd $REPO_NAME
-            fi
+            echo "================================="
+            echo "Pulling Frontend Image"
+            echo "================================="
 
-            sudo dnf install -y python3 python3-pip
+            docker pull \
+              937492564736.dkr.ecr.us-east-1.amazonaws.com/img1:${{ github.sha }}
 
-            cd frontend
 
-            if [ ! -d "venv" ]; then
-              python3 -m venv venv
-            fi
+            echo "================================="
+            echo "Stopping Old Container"
+            echo "================================="
 
-            source venv/bin/activate
+            docker stop frontend || true
 
-            pip install --upgrade pip
-            pip install -r requirements.txt
+            docker rm frontend || true
 
-            sudo tee /etc/systemd/system/frontend.service > /dev/null <<EOF
-            [Unit]
-            Description=Streamlit Frontend App
-            After=network.target
 
-            [Service]
-            User=ec2-user
-            WorkingDirectory=/home/ec2-user/front/Java-springboot-project/frontend
+            echo "================================="
+            echo "Starting Frontend Container"
+            echo "================================="
 
-            ExecStart=/bin/bash -c 'source /home/ec2-user/front/Java-springboot-project/frontend/venv/bin/activate && streamlit run app.py --server.port=8501 --server.address=0.0.0.0'
+            docker run -d \
+              --name frontend \
+              --restart unless-stopped \
+              -p 8501:8501 \
+              -e API_URL="${{ secrets.BACKEND_URL }}" \
+              937492564736.dkr.ecr.us-east-1.amazonaws.com/img1:${{ github.sha }}
 
-            Environment=API_URL=http://localhost:8084
 
-            Restart=always
-            RestartSec=5
+            echo "================================="
+            echo "Deployment Completed"
+            echo "================================="
 
-            StandardOutput=append:/home/ec2-user/frontend.log
-            StandardError=append:/home/ec2-user/frontend-error.log
 
-            [Install]
-            WantedBy=multi-user.target
-            EOF
+      # ==========================================
+      # 7. Wait for Container
+      # ==========================================
 
-            sudo systemctl daemon-reload
-            sudo systemctl enable frontend
-            sudo systemctl restart frontend
+      - name: Wait for Frontend
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_KEY }}
 
-            echo "Deployment completed."
+          script: |
+            sleep 10
 
-      ######################################################
-      # Email Notification
-      ######################################################
-      # - name: 📧 Send Deployment Report
-      #   if: success() || failure()
-      #   uses: dawidd6/action-send-mail@v3
-      #   with:
-      #     server_address: smtp.gmail.com
-      #     server_port: 465
-      #     secure: true
-      #     username: ${{ secrets.EMAIL_USERNAME }}
-      #     password: ${{ secrets.EMAIL_PASSWORD }}
-      #     subject: AI Deployment Report - ${{ github.repository }}
-      #     to: ${{ secrets.EMAIL_TO }}
-      #     from: ${{ secrets.EMAIL_USERNAME }}
 
-      #     body: |
-      #       🚀 AI Deployment Report
+      # ==========================================
+      # 8. Verify Container
+      # ==========================================
 
-      #       Repository : ${{ github.repository }}
-      #       Workflow   : ${{ github.workflow }}
-      #       Branch     : ${{ github.ref_name }}
-      #       Commit     : ${{ github.sha }}
+      - name: Verify Frontend
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_KEY }}
 
-      #       Status     : ${{ job.status }}
+          script: |
+            set -e
 
-      #       Triggered By : ${{ github.actor }}
-      #       Run Number   : ${{ github.run_number }}
+            echo "Running containers:"
+            docker ps
 
-      #       SonarQube Analysis : Completed
-      #       Quality Gate       : Passed
+            echo "Frontend logs:"
+            docker logs frontend --tail 50
 
-      #       Deployment Target  : EC2
-      #       Frontend URL       : http://${{ secrets.EC2_HOST }}:8501
+            echo "Checking frontend port:"
+            curl -I http://localhost:8501
 
-      #       Regards,
-      #       GitHub Actions
+
+
+
+
+# name: Frontend to EC2
+
+# on:
+#   # push:
+#   #   branches:
+#   #     - main
+
+#   workflow_dispatch:
+
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout Repository
+#         uses: actions/checkout@v4
+
+#       ######################################################
+#       # SonarQube Scan
+#       ######################################################
+
+#       # - name: Set up Java
+#       #   uses: actions/setup-java@v4
+#       #   with:
+#       #     distribution: temurin
+#       #     java-version: 17
+
+#       # - name: SonarQube Scan
+#       #   uses: SonarSource/sonarqube-scan-action@v5
+#       #   env:
+#       #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+#       #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+#       #   with:
+#       #     args: >
+#       #       -Dsonar.projectKey=frontend
+#       #       -Dsonar.projectName=frontend
+#       #       -Dsonar.sources=frontend
+
+#       # ######################################################
+#       # # Quality Gate
+#       # ######################################################
+
+#       # - name: SonarQube Quality Gate
+#       #   uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+#       #   timeout-minutes: 10
+#       #   env:
+#       #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+#       ######################################################
+#       # Deploy
+#       ######################################################
+
+#       - name: Deploy via SSH
+#         uses: appleboy/ssh-action@v1.1.0
+#         with:
+#           host: ${{ secrets.EC2_HOST }}
+#           username: ec2-user
+#           key: ${{ secrets.EC2_KEY }}
+#           script: |
+#             set -e
+
+#             APP_DIR=/home/ec2-user/front
+#             REPO_NAME=Java-springboot-project
+#             REPO_URL=https://github.com/SHAIK079/Java-springboot-project.git
+
+#             echo "🚀 Starting deployment..."
+
+#             mkdir -p $APP_DIR
+#             cd $APP_DIR
+
+#             if [ -d "$REPO_NAME/.git" ]; then
+#               cd $REPO_NAME
+#               git reset --hard
+#               git pull origin main
+#             else
+#               git clone $REPO_URL
+#               cd $REPO_NAME
+#             fi
+
+#             sudo dnf install -y python3 python3-pip
+
+#             cd frontend
+
+#             if [ ! -d "venv" ]; then
+#               python3 -m venv venv
+#             fi
+
+#             source venv/bin/activate
+
+#             pip install --upgrade pip
+#             pip install -r requirements.txt
+
+#             sudo tee /etc/systemd/system/frontend.service > /dev/null <<EOF
+#             [Unit]
+#             Description=Streamlit Frontend App
+#             After=network.target
+
+#             [Service]
+#             User=ec2-user
+#             WorkingDirectory=/home/ec2-user/front/Java-springboot-project/frontend
+
+#             ExecStart=/bin/bash -c 'source /home/ec2-user/front/Java-springboot-project/frontend/venv/bin/activate && streamlit run app.py --server.port=8501 --server.address=0.0.0.0'
+
+#             Environment=API_URL=http://localhost:8084
+
+#             Restart=always
+#             RestartSec=5
+
+#             StandardOutput=append:/home/ec2-user/frontend.log
+#             StandardError=append:/home/ec2-user/frontend-error.log
+
+#             [Install]
+#             WantedBy=multi-user.target
+#             EOF
+
+#             sudo systemctl daemon-reload
+#             sudo systemctl enable frontend
+#             sudo systemctl restart frontend
+
+#             echo "Deployment completed."
+
+#       ######################################################
+#       # Email Notification
+#       ######################################################
+#       # - name: 📧 Send Deployment Report
+#       #   if: success() || failure()
+#       #   uses: dawidd6/action-send-mail@v3
+#       #   with:
+#       #     server_address: smtp.gmail.com
+#       #     server_port: 465
+#       #     secure: true
+#       #     username: ${{ secrets.EMAIL_USERNAME }}
+#       #     password: ${{ secrets.EMAIL_PASSWORD }}
+#       #     subject: AI Deployment Report - ${{ github.repository }}
+#       #     to: ${{ secrets.EMAIL_TO }}
+#       #     from: ${{ secrets.EMAIL_USERNAME }}
+
+#       #     body: |
+#       #       🚀 AI Deployment Report
+
+#       #       Repository : ${{ github.repository }}
+#       #       Workflow   : ${{ github.workflow }}
+#       #       Branch     : ${{ github.ref_name }}
+#       #       Commit     : ${{ github.sha }}
+
+#       #       Status     : ${{ job.status }}
+
+#       #       Triggered By : ${{ github.actor }}
+#       #       Run Number   : ${{ github.run_number }}
+
+#       #       SonarQube Analysis : Completed
+#       #       Quality Gate       : Passed
+
+#       #       Deployment Target  : EC2
+#       #       Frontend URL       : http://${{ secrets.EC2_HOST }}:8501
+
+#       #       Regards,
+#       #       GitHub Actions
