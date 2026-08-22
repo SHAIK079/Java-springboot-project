@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -30,18 +29,28 @@ jobs:
 
 
       # ==========================================
-      # 2. Configure AWS Credentials using OIDC
+      # 2. Configure AWS Credentials
       # ==========================================
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
 
       # ==========================================
-      # 3. Login to Amazon ECR
+      # 3. Verify AWS Identity
+      # ==========================================
+
+      - name: Verify AWS Credentials
+        run: |
+          aws sts get-caller-identity
+
+
+      # ==========================================
+      # 4. Login to Amazon ECR
       # ==========================================
 
       - name: Login to Amazon ECR
@@ -49,7 +58,7 @@ jobs:
 
 
       # ==========================================
-      # 4. Build Backend Docker Image
+      # 5. Build Backend Docker Image
       # ==========================================
 
       - name: Build Backend Docker Image
@@ -61,7 +70,7 @@ jobs:
 
 
       # ==========================================
-      # 5. Push Backend Image to ECR
+      # 6. Push Backend Image to ECR
       # ==========================================
 
       - name: Push Backend Image to ECR
@@ -71,7 +80,7 @@ jobs:
 
 
       # ==========================================
-      # 6. Deploy Backend Container to Backend EC2
+      # 7. Deploy Backend to Backend EC2
       # ==========================================
 
       - name: Deploy Backend to EC2
@@ -98,20 +107,25 @@ jobs:
               937492564736.dkr.ecr.us-east-1.amazonaws.com
 
 
-            echo "Pulling Backend Docker Image..."
+            echo "=========================================="
+            echo "Pulling Backend Image"
+            echo "=========================================="
 
             docker pull \
               937492564736.dkr.ecr.us-east-1.amazonaws.com/img:${{ github.sha }}
 
 
-            echo "Stopping old backend container..."
+            echo "=========================================="
+            echo "Stopping Old Backend Container"
+            echo "=========================================="
 
             docker stop backend || true
-
             docker rm backend || true
 
 
-            echo "Starting new backend container..."
+            echo "=========================================="
+            echo "Starting Backend Container"
+            echo "=========================================="
 
             docker run -d \
               --name backend \
@@ -132,7 +146,7 @@ jobs:
 
 
       # ==========================================
-      # 7. Wait for Spring Boot
+      # 8. Wait for Spring Boot Startup
       # ==========================================
 
       - name: Wait for Backend Startup
@@ -148,10 +162,35 @@ jobs:
 
 
       # ==========================================
-      # 8. Verify Backend Container
+      # 9. Check Docker Container
       # ==========================================
 
-      - name: Verify Backend
+      - name: Check Backend Container
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.BACKEND_EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.BACKEND_EC2_KEY }}
+
+          script: |
+            echo "=========================================="
+            echo "Docker Container Status"
+            echo "=========================================="
+
+            docker ps
+
+            echo "=========================================="
+            echo "Backend Container Logs"
+            echo "=========================================="
+
+            docker logs backend --tail 50
+
+
+      # ==========================================
+      # 10. Backend Health Check
+      # ==========================================
+
+      - name: Backend Health Check
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.BACKEND_EC2_HOST }}
@@ -161,35 +200,18 @@ jobs:
           script: |
             set -e
 
-            echo "=========================================="
-            echo "Docker Container Status"
-            echo "=========================================="
-
-            docker ps
-
-
-            echo "=========================================="
-            echo "Backend Container Logs"
-            echo "=========================================="
-
-            docker logs backend --tail 50
-
-
-            echo "=========================================="
-            echo "Backend Health Check"
-            echo "=========================================="
+            echo "Checking Spring Boot health..."
 
             curl -f http://localhost:8084/actuator/health
 
             echo ""
-
             echo "=========================================="
             echo "Backend Deployment Successful!"
             echo "=========================================="
 
 
       # ==========================================
-      # 9. Deployment Report
+      # 11. Deployment Report
       # ==========================================
 
       - name: Send Deployment Report
@@ -209,15 +231,10 @@ jobs:
             Backend Deployment Report
 
             Repository: ${{ github.repository }}
-
             Branch: ${{ github.ref_name }}
-
             Commit: ${{ github.sha }}
-
             Status: ${{ job.status }}
-
             Actor: ${{ github.actor }}
-
             Workflow: ${{ github.workflow }}
 
             ECR Repository:
