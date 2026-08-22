@@ -1,4 +1,4 @@
-name: Frontend - Build, Push to ECR & Deploy
+name: Backend - Build, Push to ECR & Deploy
 
 on:
   workflow_dispatch:
@@ -9,12 +9,12 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: 937492564736.dkr.ecr.us-east-1.amazonaws.com/img1
-  CONTAINER_NAME: frontend
-  CONTAINER_PORT: 8501
+  ECR_REGISTRY: 937492564736.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REPOSITORY: img
+  CONTAINER_NAME: backend
+  CONTAINER_PORT: 8084
 
 jobs:
-
   build-push-deploy:
 
     runs-on: ubuntu-latest
@@ -30,7 +30,7 @@ jobs:
 
 
       # ==========================================
-      # 2. Configure AWS using OIDC
+      # 2. Configure AWS Credentials using OIDC
       # ==========================================
 
       - name: Configure AWS Credentials
@@ -49,44 +49,46 @@ jobs:
 
 
       # ==========================================
-      # 4. Build Frontend Docker Image
+      # 4. Build Backend Docker Image
       # ==========================================
 
-      - name: Build Frontend Docker Image
-        working-directory: frontend
+      - name: Build Backend Docker Image
+        working-directory: backend
         run: |
           docker build \
-            -t $ECR_REPOSITORY:${{ github.sha }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
             .
 
 
       # ==========================================
-      # 5. Push Image to ECR
+      # 5. Push Backend Image to ECR
       # ==========================================
 
-      - name: Push Frontend Image to ECR
+      - name: Push Backend Image to ECR
         run: |
           docker push \
-            $ECR_REPOSITORY:${{ github.sha }}
+            $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
 
 
       # ==========================================
-      # 6. Deploy Container to EC2
+      # 6. Deploy Backend Container to Backend EC2
       # ==========================================
 
-      - name: Deploy Frontend Container
+      - name: Deploy Backend to EC2
         uses: appleboy/ssh-action@v1.1.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.BACKEND_EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_KEY }}
+          key: ${{ secrets.BACKEND_EC2_KEY }}
 
           script: |
             set -e
 
-            echo "================================="
-            echo "Logging into Amazon ECR"
-            echo "================================="
+            echo "=========================================="
+            echo "Starting Backend Deployment"
+            echo "=========================================="
+
+            echo "Logging into Amazon ECR..."
 
             aws ecr get-login-password \
               --region us-east-1 \
@@ -96,77 +98,142 @@ jobs:
               937492564736.dkr.ecr.us-east-1.amazonaws.com
 
 
-            echo "================================="
-            echo "Pulling Frontend Image"
-            echo "================================="
+            echo "Pulling Backend Docker Image..."
 
             docker pull \
-              937492564736.dkr.ecr.us-east-1.amazonaws.com/img1:${{ github.sha }}
+              937492564736.dkr.ecr.us-east-1.amazonaws.com/img:${{ github.sha }}
 
 
-            echo "================================="
-            echo "Stopping Old Container"
-            echo "================================="
+            echo "Stopping old backend container..."
 
-            docker stop frontend || true
+            docker stop backend || true
 
-            docker rm frontend || true
+            docker rm backend || true
 
 
-            echo "================================="
-            echo "Starting Frontend Container"
-            echo "================================="
+            echo "Starting new backend container..."
 
             docker run -d \
-              --name frontend \
+              --name backend \
               --restart unless-stopped \
-              -p 8501:8501 \
-              -e API_URL="${{ secrets.BACKEND_URL }}" \
-              937492564736.dkr.ecr.us-east-1.amazonaws.com/img1:${{ github.sha }}
+              -p 8084:8084 \
+              -e SPRING_DATASOURCE_URL="jdbc:mysql://${{ secrets.DB_HOST }}:3306/datastore?createDatabaseIfNotExist=true" \
+              -e SPRING_DATASOURCE_USERNAME="${{ secrets.DB_USERNAME }}" \
+              -e SPRING_DATASOURCE_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e SPRING_JPA_HIBERNATE_DDL_AUTO="update" \
+              937492564736.dkr.ecr.us-east-1.amazonaws.com/img:${{ github.sha }}
 
 
-            echo "================================="
-            echo "Deployment Completed"
-            echo "================================="
+            echo "=========================================="
+            echo "Backend Container Started"
+            echo "=========================================="
+
+            docker ps
 
 
       # ==========================================
-      # 7. Wait for Container
+      # 7. Wait for Spring Boot
       # ==========================================
 
-      - name: Wait for Frontend
+      - name: Wait for Backend Startup
         uses: appleboy/ssh-action@v1.1.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.BACKEND_EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_KEY }}
+          key: ${{ secrets.BACKEND_EC2_KEY }}
 
           script: |
-            sleep 10
+            echo "Waiting for Spring Boot application..."
+            sleep 20
 
 
       # ==========================================
-      # 8. Verify Container
+      # 8. Verify Backend Container
       # ==========================================
 
-      - name: Verify Frontend
+      - name: Verify Backend
         uses: appleboy/ssh-action@v1.1.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.BACKEND_EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_KEY }}
+          key: ${{ secrets.BACKEND_EC2_KEY }}
 
           script: |
             set -e
 
-            echo "Running containers:"
+            echo "=========================================="
+            echo "Docker Container Status"
+            echo "=========================================="
+
             docker ps
 
-            echo "Frontend logs:"
-            docker logs frontend --tail 50
 
-            echo "Checking frontend port:"
-            curl -I http://localhost:8501
+            echo "=========================================="
+            echo "Backend Container Logs"
+            echo "=========================================="
+
+            docker logs backend --tail 50
+
+
+            echo "=========================================="
+            echo "Backend Health Check"
+            echo "=========================================="
+
+            curl -f http://localhost:8084/actuator/health
+
+            echo ""
+
+            echo "=========================================="
+            echo "Backend Deployment Successful!"
+            echo "=========================================="
+
+
+      # ==========================================
+      # 9. Deployment Report
+      # ==========================================
+
+      - name: Send Deployment Report
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: Backend Deployment Report - ${{ github.repository }}
+          to: ${{ secrets.EMAIL_TO }}
+          from: ${{ secrets.EMAIL_USERNAME }}
+
+          body: |
+            Backend Deployment Report
+
+            Repository: ${{ github.repository }}
+
+            Branch: ${{ github.ref_name }}
+
+            Commit: ${{ github.sha }}
+
+            Status: ${{ job.status }}
+
+            Actor: ${{ github.actor }}
+
+            Workflow: ${{ github.workflow }}
+
+            ECR Repository:
+            937492564736.dkr.ecr.us-east-1.amazonaws.com/img
+
+            Image Tag:
+            ${{ github.sha }}
+
+            Backend EC2:
+            ${{ secrets.BACKEND_EC2_HOST }}
+
+            Container:
+            backend
+
+            Port:
+            8084
 
 
 # name: Backend to EC2
