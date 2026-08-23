@@ -11,7 +11,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: "153519860425"
+  AWS_ACCOUNT_ID: "937492564736"
 
   ECR_REPOSITORY: backend
 
