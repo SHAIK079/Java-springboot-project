@@ -21,7 +21,8 @@ env:
   CONTAINER_NAME: frontend-container
   CONTAINER_PORT: 80
 
-  IMAGE_TAG: ${{ github.sha }}
+  # Unique tag for every workflow run
+  IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
 
 jobs:
 
@@ -31,11 +32,16 @@ jobs:
 
     steps:
 
-      # 1. Checkout
+      # --------------------------------------------------
+      # 1. Checkout Frontend Source
+      # --------------------------------------------------
       - name: Checkout Frontend Source
         uses: actions/checkout@v4
 
-      # 2. Configure AWS credentials
+
+      # --------------------------------------------------
+      # 2. Configure AWS Credentials
+      # --------------------------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -43,52 +49,89 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Verify AWS
+
+      # --------------------------------------------------
+      # 3. Verify AWS Identity
+      # --------------------------------------------------
       - name: Verify AWS Identity
         run: |
           aws sts get-caller-identity
 
-      # 4. Login to ECR
+
+      # --------------------------------------------------
+      # 4. Login to Amazon ECR
+      # --------------------------------------------------
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 5. Build Docker image
+
+      # --------------------------------------------------
+      # 5. Build Frontend Docker Image
+      # --------------------------------------------------
       - name: Build Frontend Docker Image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
+          echo "Building frontend image..."
+
           docker build \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             ./frontend
 
-      # 6. Push image
+          echo "Frontend image built successfully."
+
+
+      # --------------------------------------------------
+      # 6. Push Frontend Image to ECR
+      # --------------------------------------------------
       - name: Push Frontend Image to ECR
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
-          docker push \
-            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "Pushing frontend image to ECR..."
 
-      # 7. Verify image
+          docker push \
+            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo "Frontend image pushed successfully."
+
+
+      # --------------------------------------------------
+      # 7. Verify Frontend Image in ECR
+      # --------------------------------------------------
       - name: Verify Frontend Image
         run: |
-          aws ecr describe-images \
-            --repository-name $ECR_REPOSITORY \
-            --image-ids imageTag=$IMAGE_TAG
+          echo "Verifying image in ECR..."
 
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --region "$AWS_REGION"
+
+          echo "ECR image verified successfully."
+
+
+      # --------------------------------------------------
       # 8. Start SSH Agent
+      # --------------------------------------------------
       - name: Start SSH Agent
         uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
 
-      # 9. Check SSH Agent
+
+      # --------------------------------------------------
+      # 9. Verify SSH Key
+      # --------------------------------------------------
       - name: Check SSH Agent
         run: |
           ssh-add -l
 
-      # 10. Deploy through Bastion
+
+      # --------------------------------------------------
+      # 10. Deploy Through Bastion to Private EC2
+      # --------------------------------------------------
       - name: Deploy Frontend Through Bastion
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -96,10 +139,10 @@ jobs:
 
           ssh -A \
             -o StrictHostKeyChecking=accept-new \
-            $BASTION_USER@${{ secrets.BASTION_HOST }} \
+            "$BASTION_USER@${{ secrets.BASTION_HOST }}" \
             "ssh -A \
             -o StrictHostKeyChecking=accept-new \
-            $PRIVATE_EC2_USER@${{ secrets.FRONTEND_PRIVATE_EC2_HOST }} \
+            '$PRIVATE_EC2_USER@${{ secrets.FRONTEND_PRIVATE_EC2_HOST }}' \
             'bash -s'" <<REMOTE_EOF
 
           set -e
@@ -111,7 +154,15 @@ jobs:
           echo "Frontend Host:"
           hostname
 
-          echo "Logging into ECR..."
+          echo "========================================"
+          echo "Docker Version"
+          echo "========================================"
+
+          docker --version
+
+          echo "========================================"
+          echo "Logging into ECR"
+          echo "========================================"
 
           aws ecr get-login-password \
             --region "$AWS_REGION" \
@@ -119,20 +170,32 @@ jobs:
             --username AWS \
             --password-stdin "$ECR_REGISTRY"
 
-          echo "Pulling frontend image..."
+          echo "ECR Login Successful"
+
+          echo "========================================"
+          echo "Pulling Frontend Image"
+          echo "========================================"
 
           docker pull \
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Stopping old frontend container..."
+          echo "Frontend Image Pulled Successfully"
+
+          echo "========================================"
+          echo "Stopping Old Frontend Container"
+          echo "========================================"
 
           docker stop "$CONTAINER_NAME" || true
 
-          echo "Removing old frontend container..."
+          echo "========================================"
+          echo "Removing Old Frontend Container"
+          echo "========================================"
 
           docker rm "$CONTAINER_NAME" || true
 
-          echo "Starting new frontend container..."
+          echo "========================================"
+          echo "Starting New Frontend Container"
+          echo "========================================"
 
           docker run -d \
             --restart unless-stopped \
@@ -140,14 +203,26 @@ jobs:
             -p "$CONTAINER_PORT:$CONTAINER_PORT" \
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Waiting for frontend..."
+          echo "Frontend container started"
+
+          echo "========================================"
+          echo "Waiting for Frontend"
+          echo "========================================"
 
           sleep 15
 
-          echo "Checking frontend container..."
+          echo "========================================"
+          echo "Checking Frontend Container"
+          echo "========================================"
 
           docker ps \
             --filter "name=$CONTAINER_NAME"
+
+          echo "========================================"
+          echo "Frontend Container Logs"
+          echo "========================================"
+
+          docker logs --tail 30 "$CONTAINER_NAME" || true
 
           echo "========================================"
           echo "Frontend Deployment Completed"
@@ -155,20 +230,30 @@ jobs:
 
           REMOTE_EOF
 
-      # 11. Success
+
+      # --------------------------------------------------
+      # 11. Deployment Successful
+      # --------------------------------------------------
       - name: Frontend Deployment Successful
         if: success()
         run: |
-          echo "Frontend deployment successful."
-          echo "Image: $ECR_REPOSITORY:$IMAGE_TAG"
+          echo "========================================"
+          echo "Frontend Deployment Successful"
+          echo "========================================"
+          echo "Repository: $ECR_REPOSITORY"
+          echo "Image Tag: $IMAGE_TAG"
 
-      # 12. Failure
+
+      # --------------------------------------------------
+      # 12. Deployment Failed
+      # --------------------------------------------------
       - name: Frontend Deployment Failed
         if: failure()
         run: |
-          echo "Frontend deployment failed."
-          echo "Check GitHub Actions logs."
-
+          echo "========================================"
+          echo "Frontend Deployment Failed"
+          echo "========================================"
+          echo "Check the GitHub Actions logs."
 
 
       # --------------------------------------------------
