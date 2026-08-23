@@ -31,16 +31,11 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
       # 1. Checkout
-      # --------------------------------------------------
       - name: Checkout Backend Source
         uses: actions/checkout@v4
 
-
-      # --------------------------------------------------
       # 2. Configure AWS credentials
-      # --------------------------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -48,26 +43,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-
-      # --------------------------------------------------
       # 3. Verify AWS
-      # --------------------------------------------------
       - name: Verify AWS Identity
         run: |
           aws sts get-caller-identity
 
-
-      # --------------------------------------------------
       # 4. Login to ECR
-      # --------------------------------------------------
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-
-      # --------------------------------------------------
-      # 5. Build Docker Image
-      # --------------------------------------------------
+      # 5. Build Docker image
       - name: Build Backend Docker Image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -76,10 +62,7 @@ jobs:
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             ./backend
 
-
-      # --------------------------------------------------
-      # 6. Push Image to ECR
-      # --------------------------------------------------
+      # 6. Push image to ECR
       - name: Push Backend Image to ECR
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -87,114 +70,99 @@ jobs:
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-
-      # --------------------------------------------------
-      # 7. Verify ECR Image
-      # --------------------------------------------------
+      # 7. Verify image
       - name: Verify Backend Image
         run: |
           aws ecr describe-images \
             --repository-name $ECR_REPOSITORY \
             --image-ids imageTag=$IMAGE_TAG
 
-
-      # --------------------------------------------------
       # 8. Start SSH Agent
-      # --------------------------------------------------
       - name: Start SSH Agent
         uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
 
-
-      # --------------------------------------------------
-      # 9. Add Bastion Host
-      # --------------------------------------------------
-      - name: Add Bastion to Known Hosts
+      # 9. Test SSH key
+      - name: Check SSH Agent
         run: |
-          mkdir -p ~/.ssh
+          ssh-add -l
 
-          ssh-keyscan -H \
-            ${{ secrets.BASTION_HOST }} \
-            >> ~/.ssh/known_hosts
-
-
-      # --------------------------------------------------
-      # 10. Deploy Through Bastion
-      # --------------------------------------------------
+      # 10. Deploy through Bastion
       - name: Deploy Backend Through Bastion
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
 
           ssh -A \
+            -o StrictHostKeyChecking=accept-new \
             $BASTION_USER@${{ secrets.BASTION_HOST }} \
-            "ssh -A $PRIVATE_EC2_USER@${{ secrets.BACKEND_PRIVATE_EC2_HOST }} << 'REMOTE_EOF'
+            "ssh -A \
+            -o StrictHostKeyChecking=accept-new \
+            $PRIVATE_EC2_USER@${{ secrets.BACKEND_PRIVATE_EC2_HOST }} \
+            'bash -s'" <<REMOTE_EOF
 
-              set -e
+          set -e
 
-              echo '========================================'
-              echo 'Backend Deployment Started'
-              echo '========================================'
+          echo "========================================"
+          echo "Backend Deployment Started"
+          echo "========================================"
 
-              echo 'Logging into ECR...'
+          echo "Backend Host:"
+          hostname
 
-              aws ecr get-login-password \
-                --region $AWS_REGION \
-                | docker login \
-                --username AWS \
-                --password-stdin $ECR_REGISTRY
+          echo "Logging into ECR..."
 
-              echo 'Pulling backend image...'
+          aws ecr get-login-password \
+            --region "$AWS_REGION" \
+            | docker login \
+            --username AWS \
+            --password-stdin "$ECR_REGISTRY"
 
-              docker pull \
-                $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "Pulling backend image..."
 
-              echo 'Stopping old backend container...'
+          docker pull \
+            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-              docker stop $CONTAINER_NAME || true
+          echo "Stopping old backend container..."
 
-              echo 'Removing old backend container...'
+          docker stop "$CONTAINER_NAME" || true
 
-              docker rm $CONTAINER_NAME || true
+          echo "Removing old backend container..."
 
-              echo 'Starting new backend container...'
+          docker rm "$CONTAINER_NAME" || true
 
-              docker run -d \
-                --restart unless-stopped \
-                --name $CONTAINER_NAME \
-                -p $CONTAINER_PORT:$CONTAINER_PORT \
-                $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "Starting new backend container..."
 
-              echo 'Waiting for backend...'
+          docker run -d \
+            --restart unless-stopped \
+            --name "$CONTAINER_NAME" \
+            -p "$CONTAINER_PORT:$CONTAINER_PORT" \
+            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-              sleep 20
+          echo "Waiting for backend..."
 
-              echo 'Checking backend container...'
+          sleep 20
 
-              docker ps \
-                --filter name=$CONTAINER_NAME
+          echo "Checking backend container..."
 
-              echo '========================================'
-              echo 'Backend Deployment Completed'
-              echo '========================================'
+          docker ps \
+            --filter "name=$CONTAINER_NAME"
 
-          REMOTE_EOF"
+          echo "========================================"
+          echo "Backend Deployment Completed"
+          echo "========================================"
 
+          REMOTE_EOF
 
-      # --------------------------------------------------
       # 11. Success
-      # --------------------------------------------------
       - name: Backend Deployment Successful
         if: success()
         run: |
           echo "Backend deployment successful."
           echo "Image: $ECR_REPOSITORY:$IMAGE_TAG"
 
-
-      # --------------------------------------------------
       # 12. Failure
-      # --------------------------------------------------
       - name: Backend Deployment Failed
         if: failure()
         run: |
