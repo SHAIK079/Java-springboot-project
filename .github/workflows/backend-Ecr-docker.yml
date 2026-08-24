@@ -448,7 +448,7 @@ jobs:
             --fail \
             --silent \
             --show-error \
-            "http://localhost:$CONTAINER_PORT/" \
+            "http://localhost:$CONTAINER_PORT/actuator/health"" \
             >/dev/null; then
 
             echo "Backend application is responding."
