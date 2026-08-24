@@ -1,315 +1,4 @@
-name: Frontend CI/CD - Docker ECR SSH
-
-on:
-  workflow_dispatch:
-  # push:
-  #   branches:
-  #     - main
-
-permissions:
-  contents: read
-
-env:
-  AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: "937492564736"
-
-  ECR_REPOSITORY: frontend
-
-  BASTION_USER: ec2-user
-  PRIVATE_EC2_USER: ec2-user
-
-  CONTAINER_NAME: frontend-container
-
-  # Streamlit runs inside the container on 8501
-  CONTAINER_PORT: 8501
-
-  # Unique immutable ECR tag
-  IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
-
-jobs:
-
-  build-deploy-frontend:
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      # ==================================================
-      # 1. Checkout source code
-      # ==================================================
-      - name: Checkout Frontend Source
-        uses: actions/checkout@v4
-
-
-      # ==================================================
-      # 2. Configure AWS credentials
-      # ==================================================
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-
-      # ==================================================
-      # 3. Verify AWS account
-      # ==================================================
-      - name: Verify AWS Identity
-        run: |
-          echo "Checking AWS identity..."
-          aws sts get-caller-identity
-
-
-      # ==================================================
-      # 4. Login to Amazon ECR
-      # ==================================================
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
-
-      # ==================================================
-      # 5. Build Docker image
-      # ==================================================
-      - name: Build Frontend Docker Image
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-        run: |
-          echo "========================================"
-          echo "Building Frontend Docker Image"
-          echo "========================================"
-
-          docker build \
-            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
-            ./frontend
-
-          echo "Docker image built successfully."
-
-
-      # ==================================================
-      # 6. Push image to ECR
-      # ==================================================
-      - name: Push Frontend Image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-        run: |
-          echo "========================================"
-          echo "Pushing Frontend Image to ECR"
-          echo "========================================"
-
-          docker push \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-          echo "Frontend image pushed successfully."
-
-
-      # ==================================================
-      # 7. Verify image in ECR
-      # ==================================================
-      - name: Verify Frontend Image
-        run: |
-          echo "========================================"
-          echo "Verifying Frontend Image"
-          echo "========================================"
-
-          aws ecr describe-images \
-            --repository-name "$ECR_REPOSITORY" \
-            --image-ids imageTag="$IMAGE_TAG" \
-            --region "$AWS_REGION"
-
-          echo "ECR image verified successfully."
-
-
-      # ==================================================
-      # 8. Start SSH Agent
-      # ==================================================
-      - name: Start SSH Agent
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
-
-
-      # ==================================================
-      # 9. Verify SSH key
-      # ==================================================
-      - name: Check SSH Agent
-        run: |
-          echo "Checking SSH agent..."
-          ssh-add -l
-
-
-      # ==================================================
-      # 10. Deploy through Bastion
-      # ==================================================
-      - name: Deploy Frontend Through Bastion
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-        run: |
-
-          echo "========================================"
-          echo "Connecting to Bastion"
-          echo "========================================"
-
-          ssh -A \
-            -o StrictHostKeyChecking=accept-new \
-            "$BASTION_USER@${{ secrets.BASTION_HOST }}" \
-            "ssh -A \
-            -o StrictHostKeyChecking=accept-new \
-            '$PRIVATE_EC2_USER@${{ secrets.FRONTEND_PRIVATE_EC2_HOST }}' \
-            'bash -s'" <<REMOTE_EOF
-
-          set -e
-
-          echo "========================================"
-          echo "Frontend Deployment Started"
-          echo "========================================"
-
-          echo "Frontend Host:"
-          hostname
-
-          echo "Private IP:"
-          hostname -I
-
-          echo "========================================"
-          echo "Docker Version"
-          echo "========================================"
-
-          docker --version
-
-          echo "========================================"
-          echo "Logging into ECR"
-          echo "========================================"
-
-          aws ecr get-login-password \
-            --region "$AWS_REGION" \
-            | docker login \
-            --username AWS \
-            --password-stdin "$ECR_REGISTRY"
-
-          echo "ECR Login Successful"
-
-          echo "========================================"
-          echo "Pulling Frontend Image"
-          echo "========================================"
-
-          docker pull \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-          echo "Frontend image pulled successfully."
-
-          echo "========================================"
-          echo "Stopping Old Frontend Container"
-          echo "========================================"
-
-          docker stop "$CONTAINER_NAME" || true
-
-          echo "========================================"
-          echo "Removing Old Frontend Container"
-          echo "========================================"
-
-          docker rm "$CONTAINER_NAME" || true
-
-          echo "========================================"
-          echo "Checking Port 80"
-          echo "========================================"
-
-          if ss -ltn | grep -q ':80 '; then
-            echo "WARNING: Port 80 is already in use."
-            ss -ltnp | grep ':80 ' || true
-          else
-            echo "Port 80 is available."
-          fi
-
-          echo "========================================"
-          echo "Starting New Frontend Container"
-          echo "========================================"
-
-          docker run -d \
-            --restart unless-stopped \
-            --name "$CONTAINER_NAME" \
-            -p 80:8501 \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-
-          echo "Frontend container started."
-
-          echo "========================================"
-          echo "Waiting for Streamlit"
-          echo "========================================"
-
-          sleep 15
-
-          echo "========================================"
-          echo "Docker Container Status"
-          echo "========================================"
-
-          docker ps \
-            --filter "name=$CONTAINER_NAME"
-
-          echo "========================================"
-          echo "Container Port Mapping"
-          echo "========================================"
-
-          docker port "$CONTAINER_NAME"
-
-          echo "========================================"
-          echo "Frontend Container Logs"
-          echo "========================================"
-
-          docker logs --tail 30 "$CONTAINER_NAME" || true
-
-          echo "========================================"
-          echo "Testing Frontend"
-          echo "========================================"
-
-          if curl -f http://localhost:80 >/dev/null 2>&1; then
-            echo "Frontend is responding on port 80."
-          else
-            echo "WARNING: Frontend did not respond on port 80."
-            echo "Checking container logs..."
-            docker logs --tail 50 "$CONTAINER_NAME" || true
-            exit 1
-          fi
-
-          echo "========================================"
-          echo "Frontend Deployment Completed"
-          echo "========================================"
-
-          REMOTE_EOF
-
-
-      # ==================================================
-      # 11. Success
-      # ==================================================
-      - name: Frontend Deployment Successful
-        if: success()
-        run: |
-          echo "========================================"
-          echo "Frontend Deployment Successful"
-          echo "========================================"
-          echo "Repository: $ECR_REPOSITORY"
-          echo "Image Tag: $IMAGE_TAG"
-          echo "Container Port: 8501"
-          echo "EC2 Port: 80"
-
-
-      # ==================================================
-      # 12. Failure
-      # ==================================================
-      - name: Frontend Deployment Failed
-        if: failure()
-        run: |
-          echo "========================================"
-          echo "Frontend Deployment Failed"
-          echo "========================================"
-          echo "Check the GitHub Actions logs."
-
-
-      # --------------------------------------------------
-      # build through oidc/ssm
-      # --------------------------------------------------
-
-# name: Build and Push Frontend Docker Image to ECR
+# name: Frontend CI/CD - Docker ECR SSH
 
 # on:
 #   workflow_dispatch:
@@ -318,83 +7,394 @@ jobs:
 #   #     - main
 
 # permissions:
-#   id-token: write
 #   contents: read
 
 # env:
 #   AWS_REGION: us-east-1
-#   AWS_ACCOUNT_ID: "153519860425"
-#   ECR_REPOSITORY: frontend
-#   IMAGE_TAG: latest
+#   AWS_ACCOUNT_ID: "937492564736"
 
-#   EC2_NAME: docker
+#   ECR_REPOSITORY: frontend
+
+#   BASTION_USER: ec2-user
+#   PRIVATE_EC2_USER: ec2-user
+
 #   CONTAINER_NAME: frontend-container
+
+#   # Streamlit runs inside the container on 8501
 #   CONTAINER_PORT: 8501
 
+#   # Unique immutable ECR tag
+#   IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+
 # jobs:
-#   build-deploy:
+
+#   build-deploy-frontend:
+
 #     runs-on: ubuntu-latest
 
 #     steps:
 
+#       # ==================================================
 #       # 1. Checkout source code
-#       - name: Checkout Repository
+#       # ==================================================
+#       - name: Checkout Frontend Source
 #         uses: actions/checkout@v4
 
-#       # 2. Authenticate GitHub Actions with AWS using OIDC
+
+#       # ==================================================
+#       # 2. Configure AWS credentials
+#       # ==================================================
 #       - name: Configure AWS Credentials
 #         uses: aws-actions/configure-aws-credentials@v6
 #         with:
-#           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-role
+#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 #           aws-region: ${{ env.AWS_REGION }}
-#           audience: sts.amazonaws.com
 
-#       # 3. Verify AWS identity
+
+#       # ==================================================
+#       # 3. Verify AWS account
+#       # ==================================================
 #       - name: Verify AWS Identity
 #         run: |
+#           echo "Checking AWS identity..."
 #           aws sts get-caller-identity
 
-#       # 4. Login to ECR
-#       - name: Log in to Amazon ECR
+
+#       # ==================================================
+#       # 4. Login to Amazon ECR
+#       # ==================================================
+#       - name: Login to Amazon ECR
 #         id: ecr-login
 #         uses: aws-actions/amazon-ecr-login@v2
 
-#       # 5. Build and push frontend Docker image
-#       - name: Build and Push Frontend Docker Image
+
+#       # ==================================================
+#       # 5. Build Docker image
+#       # ==================================================
+#       - name: Build Frontend Docker Image
 #         env:
 #           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
 #         run: |
+#           echo "========================================"
+#           echo "Building Frontend Docker Image"
+#           echo "========================================"
+
 #           docker build \
-#             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+#             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
 #             ./frontend
 
+#           echo "Docker image built successfully."
+
+
+#       # ==================================================
+#       # 6. Push image to ECR
+#       # ==================================================
+#       - name: Push Frontend Image to ECR
+#         env:
+#           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#         run: |
+#           echo "========================================"
+#           echo "Pushing Frontend Image to ECR"
+#           echo "========================================"
+
 #           docker push \
-#             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+#             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-#       # 6. Verify image exists in ECR
-#       - name: Verify Frontend Image in ECR
+#           echo "Frontend image pushed successfully."
+
+
+#       # ==================================================
+#       # 7. Verify image in ECR
+#       # ==================================================
+#       - name: Verify Frontend Image
 #         run: |
+#           echo "========================================"
+#           echo "Verifying Frontend Image"
+#           echo "========================================"
+
 #           aws ecr describe-images \
-#             --repository-name $ECR_REPOSITORY \
-#             --image-ids imageTag=$IMAGE_TAG
+#             --repository-name "$ECR_REPOSITORY" \
+#             --image-ids imageTag="$IMAGE_TAG" \
+#             --region "$AWS_REGION"
 
-#       # 7. Deploy frontend to private EC2 using SSM
-#       - name: Deploy Frontend to Private EC2
-#         run: |
-#           aws ssm send-command \
-#             --targets "Key=tag:Name,Values=$EC2_NAME" \
-#             --document-name "AWS-RunShellScript" \
-#             --comment "Deploy frontend docker image" \
-#             --parameters 'commands=[
-#               "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com",
-#               "docker pull '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'",
-#               "docker stop '$CONTAINER_NAME' || true",
-#               "docker rm '$CONTAINER_NAME' || true",
-#               "docker run -dt --name '$CONTAINER_NAME' -p '$CONTAINER_PORT':'$CONTAINER_PORT' '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'"
-#             ]' \
-#             --region $AWS_REGION
+#           echo "ECR image verified successfully."
 
-#       # 8. Deployment confirmation
-#       - name: Deployment Command Sent
+
+#       # ==================================================
+#       # 8. Start SSH Agent
+#       # ==================================================
+#       - name: Start SSH Agent
+#         uses: webfactory/ssh-agent@v0.9.1
+#         with:
+#           ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
+
+
+#       # ==================================================
+#       # 9. Verify SSH key
+#       # ==================================================
+#       - name: Check SSH Agent
 #         run: |
-#           echo "Frontend deployment command sent successfully to private EC2."
+#           echo "Checking SSH agent..."
+#           ssh-add -l
+
+
+#       # ==================================================
+#       # 10. Deploy through Bastion
+#       # ==================================================
+#       - name: Deploy Frontend Through Bastion
+#         env:
+#           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#         run: |
+
+#           echo "========================================"
+#           echo "Connecting to Bastion"
+#           echo "========================================"
+
+#           ssh -A \
+#             -o StrictHostKeyChecking=accept-new \
+#             "$BASTION_USER@${{ secrets.BASTION_HOST }}" \
+#             "ssh -A \
+#             -o StrictHostKeyChecking=accept-new \
+#             '$PRIVATE_EC2_USER@${{ secrets.FRONTEND_PRIVATE_EC2_HOST }}' \
+#             'bash -s'" <<REMOTE_EOF
+
+#           set -e
+
+#           echo "========================================"
+#           echo "Frontend Deployment Started"
+#           echo "========================================"
+
+#           echo "Frontend Host:"
+#           hostname
+
+#           echo "Private IP:"
+#           hostname -I
+
+#           echo "========================================"
+#           echo "Docker Version"
+#           echo "========================================"
+
+#           docker --version
+
+#           echo "========================================"
+#           echo "Logging into ECR"
+#           echo "========================================"
+
+#           aws ecr get-login-password \
+#             --region "$AWS_REGION" \
+#             | docker login \
+#             --username AWS \
+#             --password-stdin "$ECR_REGISTRY"
+
+#           echo "ECR Login Successful"
+
+#           echo "========================================"
+#           echo "Pulling Frontend Image"
+#           echo "========================================"
+
+#           docker pull \
+#             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+#           echo "Frontend image pulled successfully."
+
+#           echo "========================================"
+#           echo "Stopping Old Frontend Container"
+#           echo "========================================"
+
+#           docker stop "$CONTAINER_NAME" || true
+
+#           echo "========================================"
+#           echo "Removing Old Frontend Container"
+#           echo "========================================"
+
+#           docker rm "$CONTAINER_NAME" || true
+
+#           echo "========================================"
+#           echo "Checking Port 80"
+#           echo "========================================"
+
+#           if ss -ltn | grep -q ':80 '; then
+#             echo "WARNING: Port 80 is already in use."
+#             ss -ltnp | grep ':80 ' || true
+#           else
+#             echo "Port 80 is available."
+#           fi
+
+#           echo "========================================"
+#           echo "Starting New Frontend Container"
+#           echo "========================================"
+
+#           docker run -d \
+#             --restart unless-stopped \
+#             --name "$CONTAINER_NAME" \
+#             -p 80:8501 \
+#             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+#           echo "Frontend container started."
+
+#           echo "========================================"
+#           echo "Waiting for Streamlit"
+#           echo "========================================"
+
+#           sleep 15
+
+#           echo "========================================"
+#           echo "Docker Container Status"
+#           echo "========================================"
+
+#           docker ps \
+#             --filter "name=$CONTAINER_NAME"
+
+#           echo "========================================"
+#           echo "Container Port Mapping"
+#           echo "========================================"
+
+#           docker port "$CONTAINER_NAME"
+
+#           echo "========================================"
+#           echo "Frontend Container Logs"
+#           echo "========================================"
+
+#           docker logs --tail 30 "$CONTAINER_NAME" || true
+
+#           echo "========================================"
+#           echo "Testing Frontend"
+#           echo "========================================"
+
+#           if curl -f http://localhost:80 >/dev/null 2>&1; then
+#             echo "Frontend is responding on port 80."
+#           else
+#             echo "WARNING: Frontend did not respond on port 80."
+#             echo "Checking container logs..."
+#             docker logs --tail 50 "$CONTAINER_NAME" || true
+#             exit 1
+#           fi
+
+#           echo "========================================"
+#           echo "Frontend Deployment Completed"
+#           echo "========================================"
+
+#           REMOTE_EOF
+
+
+#       # ==================================================
+#       # 11. Success
+#       # ==================================================
+#       - name: Frontend Deployment Successful
+#         if: success()
+#         run: |
+#           echo "========================================"
+#           echo "Frontend Deployment Successful"
+#           echo "========================================"
+#           echo "Repository: $ECR_REPOSITORY"
+#           echo "Image Tag: $IMAGE_TAG"
+#           echo "Container Port: 8501"
+#           echo "EC2 Port: 80"
+
+
+#       # ==================================================
+#       # 12. Failure
+#       # ==================================================
+#       - name: Frontend Deployment Failed
+#         if: failure()
+#         run: |
+#           echo "========================================"
+#           echo "Frontend Deployment Failed"
+#           echo "========================================"
+#           echo "Check the GitHub Actions logs."
+
+
+      # --------------------------------------------------
+      # build through oidc/ssm
+      # --------------------------------------------------
+
+name: Build and Push Frontend Docker Image to ECR
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "153519860425"
+  ECR_REPOSITORY: frontend
+  IMAGE_TAG: latest
+
+  EC2_NAME: docker
+  CONTAINER_NAME: frontend-container
+  CONTAINER_PORT: 8501
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # 1. Checkout source code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Authenticate GitHub Actions with AWS using OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      # 3. Verify AWS identity
+      - name: Verify AWS Identity
+        run: |
+          aws sts get-caller-identity
+
+      # 4. Login to ECR
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 5. Build and push frontend Docker image
+      - name: Build and Push Frontend Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            ./frontend
+
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # 6. Verify image exists in ECR
+      - name: Verify Frontend Image in ECR
+        run: |
+          aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --image-ids imageTag=$IMAGE_TAG
+
+      # 7. Deploy frontend to private EC2 using SSM
+      - name: Deploy Frontend to Private EC2
+        run: |
+          aws ssm send-command \
+            --targets "Key=tag:Name,Values=$EC2_NAME" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy frontend docker image" \
+            --parameters 'commands=[
+              "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com",
+              "docker pull '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'",
+              "docker stop '$CONTAINER_NAME' || true",
+              "docker rm '$CONTAINER_NAME' || true",
+              "docker run -dt --name '$CONTAINER_NAME' -p '$CONTAINER_PORT':'$CONTAINER_PORT' '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'"
+            ]' \
+            --region $AWS_REGION
+
+      # 8. Deployment confirmation
+      - name: Deployment Command Sent
+        run: |
+          echo "Frontend deployment command sent successfully to private EC2."
