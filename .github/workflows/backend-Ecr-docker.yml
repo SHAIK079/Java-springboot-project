@@ -1,574 +1,574 @@
-name: Backend CI/CD - Docker ECR SSH
+# name: Backend CI/CD - Docker ECR SSH
 
-"on":
-  workflow_dispatch:
+# "on":
+#   workflow_dispatch:
 
-  push:
-    branches:
-      - main
+#   push:
+#     branches:
+#       - main
 
-permissions:
-  contents: read
+# permissions:
+#   contents: read
 
-env:
-  AWS_REGION: us-east-1
-  AWS_ACCOUNT_ID: "937492564736"
+# env:
+#   AWS_REGION: us-east-1
+#   AWS_ACCOUNT_ID: "937492564736"
 
-  ECR_REPOSITORY: backend
+#   ECR_REPOSITORY: backend
 
-  BASTION_USER: ec2-user
-  PRIVATE_EC2_USER: ec2-user
+#   BASTION_USER: ec2-user
+#   PRIVATE_EC2_USER: ec2-user
 
-  CONTAINER_NAME: backend-container
-  OLD_CONTAINER_NAME: backend-container-old
+#   CONTAINER_NAME: backend-container
+#   OLD_CONTAINER_NAME: backend-container-old
 
-  CONTAINER_PORT: 8084
+#   CONTAINER_PORT: 8084
 
-  # Unique image tag
-  IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+#   # Unique image tag
+#   IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
 
-jobs:
+# jobs:
 
-  build-deploy-backend:
+#   build-deploy-backend:
 
-    runs-on: ubuntu-latest
+#     runs-on: ubuntu-latest
 
-    steps:
+#     steps:
 
-      # ==================================================
-      # 1. CHECKOUT
-      # ==================================================
+#       # ==================================================
+#       # 1. CHECKOUT
+#       # ==================================================
 
-      - name: Checkout Backend Source
-        uses: actions/checkout@v4
+#       - name: Checkout Backend Source
+#         uses: actions/checkout@v4
 
 
-      # ==================================================
-      # 2. AWS CREDENTIALS
-      # ==================================================
+#       # ==================================================
+#       # 2. AWS CREDENTIALS
+#       # ==================================================
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+#       - name: Configure AWS Credentials
+#         uses: aws-actions/configure-aws-credentials@v6
+#         with:
+#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#           aws-region: ${{ env.AWS_REGION }}
 
 
-      # ==================================================
-      # 3. VERIFY AWS
-      # ==================================================
+#       # ==================================================
+#       # 3. VERIFY AWS
+#       # ==================================================
 
-      - name: Verify AWS Identity
-        run: |
-          echo "Checking AWS identity..."
-          aws sts get-caller-identity
+#       - name: Verify AWS Identity
+#         run: |
+#           echo "Checking AWS identity..."
+#           aws sts get-caller-identity
 
 
-      # ==================================================
-      # 4. LOGIN TO ECR
-      # ==================================================
+#       # ==================================================
+#       # 4. LOGIN TO ECR
+#       # ==================================================
 
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
+#       - name: Login to Amazon ECR
+#         id: ecr-login
+#         uses: aws-actions/amazon-ecr-login@v2
 
 
-      # ==================================================
-      # 5. BUILD IMAGE
-      # ==================================================
+#       # ==================================================
+#       # 5. BUILD IMAGE
+#       # ==================================================
 
-      - name: Build Backend Docker Image
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#       - name: Build Backend Docker Image
+#         env:
+#           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
 
-        run: |
+#         run: |
 
-          echo "========================================"
-          echo "Building Backend Docker Image"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Building Backend Docker Image"
+#           echo "========================================"
 
-          docker build \
-            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
-            ./backend
+#           docker build \
+#             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+#             ./backend
 
-          echo "Image build completed."
+#           echo "Image build completed."
 
 
-      # ==================================================
-      # 6. PUSH IMAGE TO ECR
-      # ==================================================
+#       # ==================================================
+#       # 6. PUSH IMAGE TO ECR
+#       # ==================================================
 
-      - name: Push Backend Image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#       - name: Push Backend Image to ECR
+#         env:
+#           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
 
-        run: |
+#         run: |
 
-          echo "========================================"
-          echo "Pushing Backend Image"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Pushing Backend Image"
+#           echo "========================================"
 
-          docker push \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+#           docker push \
+#             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Image pushed successfully."
+#           echo "Image pushed successfully."
 
 
-      # ==================================================
-      # 7. VERIFY ECR IMAGE
-      # ==================================================
+#       # ==================================================
+#       # 7. VERIFY ECR IMAGE
+#       # ==================================================
 
-      - name: Verify Backend Image
-        run: |
+#       - name: Verify Backend Image
+#         run: |
 
-          echo "========================================"
-          echo "Verifying ECR Image"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Verifying ECR Image"
+#           echo "========================================"
 
-          aws ecr describe-images \
-            --repository-name "$ECR_REPOSITORY" \
-            --image-ids imageTag="$IMAGE_TAG" \
-            --region "$AWS_REGION"
+#           aws ecr describe-images \
+#             --repository-name "$ECR_REPOSITORY" \
+#             --image-ids imageTag="$IMAGE_TAG" \
+#             --region "$AWS_REGION"
 
-          echo "ECR image verified."
+#           echo "ECR image verified."
 
 
-      # ==================================================
-      # 8. START SSH AGENT
-      # ==================================================
+#       # ==================================================
+#       # 8. START SSH AGENT
+#       # ==================================================
 
-      - name: Start SSH Agent
-        uses: webfactory/ssh-agent@v0.9.1
+#       - name: Start SSH Agent
+#         uses: webfactory/ssh-agent@v0.9.1
 
-        with:
-          ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
+#         with:
+#           ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
 
 
-      # ==================================================
-      # 9. VERIFY SSH KEY
-      # ==================================================
+#       # ==================================================
+#       # 9. VERIFY SSH KEY
+#       # ==================================================
 
-      - name: Check SSH Agent
-        run: |
+#       - name: Check SSH Agent
+#         run: |
 
-          echo "Checking SSH agent..."
+#           echo "Checking SSH agent..."
 
-          ssh-add -l
+#           ssh-add -l
 
 
-      # ==================================================
-      # 10. DEPLOY THROUGH BASTION
-      # ==================================================
+#       # ==================================================
+#       # 10. DEPLOY THROUGH BASTION
+#       # ==================================================
 
-      - name: Deploy Backend Through Bastion
+#       - name: Deploy Backend Through Bastion
 
-        env:
+#         env:
 
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
 
-          # Database configuration
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USERNAME: ${{ secrets.DB_USERNAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+#           # Database configuration
+#           DB_HOST: ${{ secrets.DB_HOST }}
+#           DB_NAME: ${{ secrets.DB_NAME }}
+#           DB_USERNAME: ${{ secrets.DB_USERNAME }}
+#           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
-        run: |
+#         run: |
 
-          echo "========================================"
-          echo "Connecting to Backend EC2"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Connecting to Backend EC2"
+#           echo "========================================"
 
-          ssh \
-            -o StrictHostKeyChecking=accept-new \
-            -o ConnectTimeout=10 \
-            -o ProxyCommand="ssh -W %h:%p \
-              -o StrictHostKeyChecking=accept-new \
-              -o ConnectTimeout=10 \
-              $BASTION_USER@${{ secrets.BASTION_HOST }}" \
-            "$PRIVATE_EC2_USER@${{ secrets.BACKEND_PRIVATE_EC2_HOST }}" \
-            'bash -s' <<REMOTE_EOF
+#           ssh \
+#             -o StrictHostKeyChecking=accept-new \
+#             -o ConnectTimeout=10 \
+#             -o ProxyCommand="ssh -W %h:%p \
+#               -o StrictHostKeyChecking=accept-new \
+#               -o ConnectTimeout=10 \
+#               $BASTION_USER@${{ secrets.BASTION_HOST }}" \
+#             "$PRIVATE_EC2_USER@${{ secrets.BACKEND_PRIVATE_EC2_HOST }}" \
+#             'bash -s' <<REMOTE_EOF
 
-          set -e
+#           set -e
 
-          echo "========================================"
-          echo "BACKEND DEPLOYMENT STARTED"
-          echo "========================================"
+#           echo "========================================"
+#           echo "BACKEND DEPLOYMENT STARTED"
+#           echo "========================================"
 
-          echo "Hostname:"
-          hostname
+#           echo "Hostname:"
+#           hostname
 
-          echo "Private IP:"
-          hostname -I
+#           echo "Private IP:"
+#           hostname -I
 
-          echo "Docker version:"
-          docker --version
+#           echo "Docker version:"
+#           docker --version
 
 
-          # ==================================================
-          # ECR LOGIN
-          # ==================================================
+#           # ==================================================
+#           # ECR LOGIN
+#           # ==================================================
 
-          echo "========================================"
-          echo "Logging into ECR"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Logging into ECR"
+#           echo "========================================"
 
-          aws ecr get-login-password \
-            --region "$AWS_REGION" \
-            | docker login \
-            --username AWS \
-            --password-stdin "$ECR_REGISTRY"
+#           aws ecr get-login-password \
+#             --region "$AWS_REGION" \
+#             | docker login \
+#             --username AWS \
+#             --password-stdin "$ECR_REGISTRY"
 
-          echo "ECR login successful."
+#           echo "ECR login successful."
 
 
-          # ==================================================
-          # PULL NEW IMAGE
-          # ==================================================
+#           # ==================================================
+#           # PULL NEW IMAGE
+#           # ==================================================
 
-          echo "========================================"
-          echo "Pulling New Backend Image"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Pulling New Backend Image"
+#           echo "========================================"
 
-          docker pull \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+#           docker pull \
+#             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Image pulled successfully."
+#           echo "Image pulled successfully."
 
 
-          # ==================================================
-          # REMOVE PREVIOUS ROLLBACK CONTAINER
-          # ==================================================
+#           # ==================================================
+#           # REMOVE PREVIOUS ROLLBACK CONTAINER
+#           # ==================================================
 
-          echo "========================================"
-          echo "Preparing Rollback Container"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Preparing Rollback Container"
+#           echo "========================================"
 
-          docker rm -f \
-            "$OLD_CONTAINER_NAME" \
-            2>/dev/null || true
+#           docker rm -f \
+#             "$OLD_CONTAINER_NAME" \
+#             2>/dev/null || true
 
 
-          # ==================================================
-          # SAVE CURRENT CONTAINER
-          # ==================================================
+#           # ==================================================
+#           # SAVE CURRENT CONTAINER
+#           # ==================================================
 
-          if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+#           if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
 
-            echo "Existing backend container found."
+#             echo "Existing backend container found."
 
-            docker stop "$CONTAINER_NAME" || true
+#             docker stop "$CONTAINER_NAME" || true
 
-            docker rename \
-              "$CONTAINER_NAME" \
-              "$OLD_CONTAINER_NAME"
+#             docker rename \
+#               "$CONTAINER_NAME" \
+#               "$OLD_CONTAINER_NAME"
 
-            echo "Previous container saved as:"
-            echo "$OLD_CONTAINER_NAME"
+#             echo "Previous container saved as:"
+#             echo "$OLD_CONTAINER_NAME"
 
-          else
+#           else
 
-            echo "No existing backend container found."
+#             echo "No existing backend container found."
 
-          fi
+#           fi
 
 
-          # ==================================================
-          # CHECK PORT
-          # ==================================================
+#           # ==================================================
+#           # CHECK PORT
+#           # ==================================================
 
-          echo "========================================"
-          echo "Checking Port $CONTAINER_PORT"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Checking Port $CONTAINER_PORT"
+#           echo "========================================"
 
-          if ss -lntp | grep -q ":$CONTAINER_PORT "; then
+#           if ss -lntp | grep -q ":$CONTAINER_PORT "; then
 
-            echo "ERROR: Port $CONTAINER_PORT is still occupied."
+#             echo "ERROR: Port $CONTAINER_PORT is still occupied."
 
-            ss -lntp | grep ":$CONTAINER_PORT " || true
+#             ss -lntp | grep ":$CONTAINER_PORT " || true
 
-            echo "Attempting rollback..."
+#             echo "Attempting rollback..."
 
-            if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
+#             if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
 
-              docker rename \
-                "$OLD_CONTAINER_NAME" \
-                "$CONTAINER_NAME"
+#               docker rename \
+#                 "$OLD_CONTAINER_NAME" \
+#                 "$CONTAINER_NAME"
 
-              docker start "$CONTAINER_NAME"
+#               docker start "$CONTAINER_NAME"
 
-            fi
+#             fi
 
-            exit 1
+#             exit 1
 
-          fi
+#           fi
 
-          echo "Port $CONTAINER_PORT is available."
+#           echo "Port $CONTAINER_PORT is available."
 
 
-          # ==================================================
-          # START NEW CONTAINER
-          # ==================================================
+#           # ==================================================
+#           # START NEW CONTAINER
+#           # ==================================================
 
-          echo "========================================"
-          echo "Starting New Backend Container"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Starting New Backend Container"
+#           echo "========================================"
 
-          docker run -d \
-            --restart unless-stopped \
-            --name "$CONTAINER_NAME" \
-            -p "$CONTAINER_PORT:$CONTAINER_PORT" \
-            -e DB_HOST="$DB_HOST" \
-            -e DB_NAME="$DB_NAME" \
-            -e DB_USERNAME="$DB_USERNAME" \
-            -e DB_PASSWORD="$DB_PASSWORD" \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+#           docker run -d \
+#             --restart unless-stopped \
+#             --name "$CONTAINER_NAME" \
+#             -p "$CONTAINER_PORT:$CONTAINER_PORT" \
+#             -e DB_HOST="$DB_HOST" \
+#             -e DB_NAME="$DB_NAME" \
+#             -e DB_USERNAME="$DB_USERNAME" \
+#             -e DB_PASSWORD="$DB_PASSWORD" \
+#             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "New container started."
+#           echo "New container started."
 
 
-          # ==================================================
-          # WAIT FOR SPRING BOOT
-          # ==================================================
+#           # ==================================================
+#           # WAIT FOR SPRING BOOT
+#           # ==================================================
 
-          echo "========================================"
-          echo "Waiting for Spring Boot"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Waiting for Spring Boot"
+#           echo "========================================"
 
-          sleep 30
+#           sleep 30
 
 
-          # ==================================================
-          # CHECK CONTAINER STATUS
-          # ==================================================
+#           # ==================================================
+#           # CHECK CONTAINER STATUS
+#           # ==================================================
 
-          echo "========================================"
-          echo "Checking Container Status"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Checking Container Status"
+#           echo "========================================"
 
-          STATUS=\$(docker inspect \
-            -f '{{.State.Status}}' \
-            "$CONTAINER_NAME" \
-            2>/dev/null || echo "missing")
+#           STATUS=\$(docker inspect \
+#             -f '{{.State.Status}}' \
+#             "$CONTAINER_NAME" \
+#             2>/dev/null || echo "missing")
 
-          echo "Container status: \$STATUS"
+#           echo "Container status: \$STATUS"
 
 
-          if [ "\$STATUS" != "running" ]; then
+#           if [ "\$STATUS" != "running" ]; then
 
-            echo "ERROR: Backend container is not running."
+#             echo "ERROR: Backend container is not running."
 
-            echo "========================================"
-            echo "Backend Logs"
-            echo "========================================"
+#             echo "========================================"
+#             echo "Backend Logs"
+#             echo "========================================"
 
-            docker logs \
-              "$CONTAINER_NAME" \
-              --tail 100 || true
+#             docker logs \
+#               "$CONTAINER_NAME" \
+#               --tail 100 || true
 
 
-            echo "========================================"
-            echo "ROLLING BACK"
-            echo "========================================"
+#             echo "========================================"
+#             echo "ROLLING BACK"
+#             echo "========================================"
 
-            docker rm -f \
-              "$CONTAINER_NAME" \
-              2>/dev/null || true
+#             docker rm -f \
+#               "$CONTAINER_NAME" \
+#               2>/dev/null || true
 
 
-            if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
+#             if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
 
-              docker rename \
-                "$OLD_CONTAINER_NAME" \
-                "$CONTAINER_NAME"
+#               docker rename \
+#                 "$OLD_CONTAINER_NAME" \
+#                 "$CONTAINER_NAME"
 
-              docker start "$CONTAINER_NAME"
+#               docker start "$CONTAINER_NAME"
 
-              echo "Rollback successful."
+#               echo "Rollback successful."
 
-            else
+#             else
 
-              echo "No previous container available."
+#               echo "No previous container available."
 
-            fi
+#             fi
 
-            exit 1
+#             exit 1
 
-          fi
+#           fi
 
 
-          echo "Backend container is running."
+#           echo "Backend container is running."
 
 
-          # ==================================================
-          # SHOW CONTAINER
-          # ==================================================
+#           # ==================================================
+#           # SHOW CONTAINER
+#           # ==================================================
 
-          echo "========================================"
-          echo "Docker Status"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Docker Status"
+#           echo "========================================"
 
-          docker ps \
-            --filter "name=$CONTAINER_NAME"
+#           docker ps \
+#             --filter "name=$CONTAINER_NAME"
 
 
-          # ==================================================
-          # SHOW PORT
-          # ==================================================
+#           # ==================================================
+#           # SHOW PORT
+#           # ==================================================
 
-          echo "========================================"
-          echo "Port Mapping"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Port Mapping"
+#           echo "========================================"
 
-          docker port "$CONTAINER_NAME"
+#           docker port "$CONTAINER_NAME"
 
 
-          # ==================================================
-          # SHOW LOGS
-          # ==================================================
+#           # ==================================================
+#           # SHOW LOGS
+#           # ==================================================
 
-          echo "========================================"
-          echo "Backend Logs"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Backend Logs"
+#           echo "========================================"
 
-          docker logs \
-            --tail 50 \
-            "$CONTAINER_NAME" || true
+#           docker logs \
+#             --tail 50 \
+#             "$CONTAINER_NAME" || true
 
 
-          # ==================================================
-          # APPLICATION HEALTH CHECK
-          # ==================================================
+#           # ==================================================
+#           # APPLICATION HEALTH CHECK
+#           # ==================================================
 
-          echo "========================================"
-          echo "Testing Backend Application"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Testing Backend Application"
+#           echo "========================================"
 
-          if curl \
-            --fail \
-            --silent \
-            --show-error \
-            "http://localhost:$CONTAINER_PORT/actuator/health"" \
-            >/dev/null; then
+#           if curl \
+#             --fail \
+#             --silent \
+#             --show-error \
+#             "http://localhost:$CONTAINER_PORT/actuator/health"" \
+#             >/dev/null; then
 
-            echo "Backend application is responding."
+#             echo "Backend application is responding."
 
-          else
+#           else
 
-            echo "ERROR: Backend application is not responding."
+#             echo "ERROR: Backend application is not responding."
 
-            echo "========================================"
-            echo "Backend Logs"
-            echo "========================================"
+#             echo "========================================"
+#             echo "Backend Logs"
+#             echo "========================================"
 
-            docker logs \
-              --tail 100 \
-              "$CONTAINER_NAME" || true
+#             docker logs \
+#               --tail 100 \
+#               "$CONTAINER_NAME" || true
 
 
-            echo "========================================"
-            echo "ROLLING BACK"
-            echo "========================================"
+#             echo "========================================"
+#             echo "ROLLING BACK"
+#             echo "========================================"
 
-            docker rm -f \
-              "$CONTAINER_NAME" \
-              2>/dev/null || true
+#             docker rm -f \
+#               "$CONTAINER_NAME" \
+#               2>/dev/null || true
 
 
-            if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
+#             if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
 
-              docker rename \
-                "$OLD_CONTAINER_NAME" \
-                "$CONTAINER_NAME"
+#               docker rename \
+#                 "$OLD_CONTAINER_NAME" \
+#                 "$CONTAINER_NAME"
 
-              docker start "$CONTAINER_NAME"
+#               docker start "$CONTAINER_NAME"
 
-              echo "Rollback successful."
+#               echo "Rollback successful."
 
-            else
+#             else
 
-              echo "No previous container available."
+#               echo "No previous container available."
 
-            fi
+#             fi
 
-            exit 1
+#             exit 1
 
-          fi
+#           fi
 
 
-          # ==================================================
-          # SUCCESS - REMOVE OLD CONTAINER
-          # ==================================================
+#           # ==================================================
+#           # SUCCESS - REMOVE OLD CONTAINER
+#           # ==================================================
 
-          echo "========================================"
-          echo "New Backend Is Healthy"
-          echo "========================================"
+#           echo "========================================"
+#           echo "New Backend Is Healthy"
+#           echo "========================================"
 
-          docker rm -f \
-            "$OLD_CONTAINER_NAME" \
-            2>/dev/null || true
+#           docker rm -f \
+#             "$OLD_CONTAINER_NAME" \
+#             2>/dev/null || true
 
-          echo "Old container removed."
+#           echo "Old container removed."
 
 
-          # ==================================================
-          # CLEAN DANGLING IMAGES
-          # ==================================================
+#           # ==================================================
+#           # CLEAN DANGLING IMAGES
+#           # ==================================================
 
-          echo "========================================"
-          echo "Cleaning Dangling Images"
-          echo "========================================"
+#           echo "========================================"
+#           echo "Cleaning Dangling Images"
+#           echo "========================================"
 
-          docker image prune -f || true
+#           docker image prune -f || true
 
 
-          # ==================================================
-          # FINAL
-          # ==================================================
+#           # ==================================================
+#           # FINAL
+#           # ==================================================
 
-          echo "========================================"
-          echo "BACKEND DEPLOYMENT SUCCESSFUL"
-          echo "========================================"
+#           echo "========================================"
+#           echo "BACKEND DEPLOYMENT SUCCESSFUL"
+#           echo "========================================"
 
-          echo "Repository : $ECR_REPOSITORY"
-          echo "Image Tag  : $IMAGE_TAG"
-          echo "Port       : $CONTAINER_PORT"
+#           echo "Repository : $ECR_REPOSITORY"
+#           echo "Image Tag  : $IMAGE_TAG"
+#           echo "Port       : $CONTAINER_PORT"
 
-          REMOTE_EOF
+#           REMOTE_EOF
 
 
-      # ==================================================
-      # 11. SUCCESS
-      # ==================================================
+#       # ==================================================
+#       # 11. SUCCESS
+#       # ==================================================
 
-      - name: Backend Deployment Successful
-        if: success()
+#       - name: Backend Deployment Successful
+#         if: success()
 
-        run: |
+#         run: |
 
-          echo "========================================"
-          echo "BACKEND DEPLOYMENT SUCCESSFUL"
-          echo "========================================"
+#           echo "========================================"
+#           echo "BACKEND DEPLOYMENT SUCCESSFUL"
+#           echo "========================================"
 
-          echo "Repository     : $ECR_REPOSITORY"
-          echo "Image Tag      : $IMAGE_TAG"
-          echo "Container Port : $CONTAINER_PORT"
+#           echo "Repository     : $ECR_REPOSITORY"
+#           echo "Image Tag      : $IMAGE_TAG"
+#           echo "Container Port : $CONTAINER_PORT"
 
 
-      # ==================================================
-      # 12. FAILURE
-      # ==================================================
+#       # ==================================================
+#       # 12. FAILURE
+#       # ==================================================
 
-      - name: Backend Deployment Failed
-        if: failure()
+#       - name: Backend Deployment Failed
+#         if: failure()
 
-        run: |
+#         run: |
 
-          echo "========================================"
-          echo "BACKEND DEPLOYMENT FAILED"
-          echo "========================================"
+#           echo "========================================"
+#           echo "BACKEND DEPLOYMENT FAILED"
+#           echo "========================================"
 
-          echo "Check GitHub Actions logs."
+#           echo "Check GitHub Actions logs."
 
   # --------------------------------------------------
       # build through oidc docker container: 
@@ -576,97 +576,96 @@ jobs:
 
 # name: Build and Push Backend Docker Image to ECR
 
-# on:
-#   workflow_dispatch:
-#   # push:
-#   #   branches:
-#   #     - main
+on:
+  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - main
 
-# permissions:
-#   id-token: write
-#   contents: read
+permissions:
+  id-token: write
+  contents: read
 
-# env:
-#   AWS_REGION: us-east-1
-#   AWS_ACCOUNT_ID: "153519860425"
-#   ECR_REPOSITORY: backend
-#   IMAGE_TAG: latest
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "153519860425"
+  ECR_REPOSITORY: backend
+  IMAGE_TAG: latest
 
-#   # EC2_NAME: backend-ec2
-#   EC2_NAME: docker
-#   CONTAINER_NAME: backend-container
-#   CONTAINER_PORT: 8084
+  # EC2_NAME: backend-ec2
+  EC2_NAME: docker
+  CONTAINER_NAME: backend-container
+  CONTAINER_PORT: 8084
 
-#   DB_URL_PARAMETER: /backend/db/url
-#   DB_USERNAME_PARAMETER: /backend/db/username
-#   DB_PASSWORD_PARAMETER: /backend/db/password
+  DB_URL_PARAMETER: /backend/db/url
+  DB_USERNAME_PARAMETER: /backend/db/username
+  DB_PASSWORD_PARAMETER: /backend/db/password
 
-# jobs:
-#   build-deploy:
-#     runs-on: ubuntu-latest
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
 
-#     steps:
+    steps:
+      # 1. Checkout source code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      # # 1. Checkout source code
-      # - name: Checkout Repository
-      #   uses: actions/checkout@v4
+      # 2. Authenticate GitHub Actions with AWS using OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
 
-      # # 2. Authenticate GitHub Actions with AWS using OIDC
-      # - name: Configure AWS Credentials
-      #   uses: aws-actions/configure-aws-credentials@v6
-      #   with:
-      #     role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-role
-      #     aws-region: ${{ env.AWS_REGION }}
-      #     audience: sts.amazonaws.com
+      # 3. Verify AWS identity
+      - name: Verify AWS Identity
+        run: |
+          aws sts get-caller-identity
 
-      # # 3. Verify AWS identity
-      # - name: Verify AWS Identity
-      #   run: |
-      #     aws sts get-caller-identity
+      # 4. Login to Amazon ECR
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
 
-      # # 4. Login to Amazon ECR
-      # - name: Log in to Amazon ECR
-      #   id: ecr-login
-      #   uses: aws-actions/amazon-ecr-login@v2
+      # 5. Build and push Docker image
+      - name: Build and Push Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            ./backend
 
-      # # 5. Build and push Docker image
-      # - name: Build and Push Docker Image
-      #   env:
-      #     ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-      #   run: |
-      #     docker build \
-      #       -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-      #       ./backend
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-      #     docker push \
-      #       $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      # 6. Verify image exists in ECR
+      - name: Verify Docker Image in ECR
+        run: |
+          aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --image-ids imageTag=$IMAGE_TAG
 
-      # # 6. Verify image exists in ECR
-      # - name: Verify Docker Image in ECR
-      #   run: |
-      #     aws ecr describe-images \
-      #       --repository-name $ECR_REPOSITORY \
-      #       --image-ids imageTag=$IMAGE_TAG
-      # - name: Deploy Backend to Private EC2
-      #   run: |
-      #     aws ssm send-command \
-      #     --targets "Key=tag:Name,Values=$EC2_NAME" \
-      #     --document-name "AWS-RunShellScript" \
-      #     --comment "Deploy backend docker image" \
-      #     --parameters 'commands=[
-      #     "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com",
-      #     "docker pull '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'",
-      #     "docker stop '$CONTAINER_NAME' || true",
-      #     "docker rm '$CONTAINER_NAME' || true",
-      #     "rm -f /home/ssm-user/backend.env",
-      #     "echo SPRING_DATASOURCE_URL=$(aws ssm get-parameter --name '$DB_URL_PARAMETER' --with-decryption --query Parameter.Value --output text --region '$AWS_REGION') >> /home/ssm-user/backend.env",
-      #     "echo SPRING_DATASOURCE_USERNAME=$(aws ssm get-parameter --name '$DB_USERNAME_PARAMETER' --with-decryption --query Parameter.Value --output text --region '$AWS_REGION') >> /home/ssm-user/backend.env",
-      #     "echo SPRING_DATASOURCE_PASSWORD=$(aws ssm get-parameter --name '$DB_PASSWORD_PARAMETER' --with-decryption --query Parameter.Value --output text --region '$AWS_REGION') >> /home/ssm-user/backend.env",
-      #     "chmod 600 /home/ssm-user/backend.env",
-      #     "docker run -dt --name '$CONTAINER_NAME' --env-file /home/ssm-user/backend.env -p '$CONTAINER_PORT':'$CONTAINER_PORT' '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'"
-      #     ]' \
-          # --region $AWS_REGION      
-
+      - name: Deploy Backend to Private EC2
+        run: |
+          aws ssm send-command \
+            --targets "Key=tag:Name,Values=$EC2_NAME" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy backend docker image" \
+            --parameters 'commands=[
+              "aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com",
+              "docker pull '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'",
+              "docker stop '$CONTAINER_NAME' || true",
+              "docker rm '$CONTAINER_NAME' || true",
+              "rm -f /home/ssm-user/backend.env",
+              "echo SPRING_DATASOURCE_URL=$(aws ssm get-parameter --name '$DB_URL_PARAMETER' --with-decryption --query Parameter.Value --output text --region '$AWS_REGION') >> /home/ssm-user/backend.env",
+              "echo SPRING_DATASOURCE_USERNAME=$(aws ssm get-parameter --name '$DB_USERNAME_PARAMETER' --with-decryption --query Parameter.Value --output text --region '$AWS_REGION') >> /home/ssm-user/backend.env",
+              "echo SPRING_DATASOURCE_PASSWORD=$(aws ssm get-parameter --name '$DB_PASSWORD_PARAMETER' --with-decryption --query Parameter.Value --output text --region '$AWS_REGION') >> /home/ssm-user/backend.env",
+              "chmod 600 /home/ssm-user/backend.env",
+              "docker run -dt --name '$CONTAINER_NAME' --env-file /home/ssm-user/backend.env -p '$CONTAINER_PORT':'$CONTAINER_PORT' '$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/'$ECR_REPOSITORY':'$IMAGE_TAG'"
+            ]' \
+            --region $AWS_REGION
 
       # # 7. Deploy to private EC2 using SSM
       # - name: Deploy Backend to Private EC2
