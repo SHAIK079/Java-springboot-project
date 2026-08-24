@@ -1,10 +1,11 @@
 name: Backend CI/CD - Docker ECR SSH
 
-on:
+"on":
   workflow_dispatch:
-  # push:
-  #   branches:
-  #     - main
+
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -21,13 +22,9 @@ env:
   CONTAINER_NAME: backend-container
   OLD_CONTAINER_NAME: backend-container-old
 
-  # Backend listens on the same port on host and container.
-  # If you ever need a different host port, split this into
-  # HOST_PORT / CONTAINER_PORT the way the frontend workflow does.
   CONTAINER_PORT: 8084
 
-  # Unique immutable ECR tag (sha + run number avoids
-  # accidentally overwriting a tag on workflow re-runs)
+  # Unique image tag
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
 
 jobs:
@@ -39,15 +36,17 @@ jobs:
     steps:
 
       # ==================================================
-      # 1. Checkout source code
+      # 1. CHECKOUT
       # ==================================================
+
       - name: Checkout Backend Source
         uses: actions/checkout@v4
 
 
       # ==================================================
-      # 2. Configure AWS credentials
+      # 2. AWS CREDENTIALS
       # ==================================================
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -57,8 +56,9 @@ jobs:
 
 
       # ==================================================
-      # 3. Verify AWS identity
+      # 3. VERIFY AWS
       # ==================================================
+
       - name: Verify AWS Identity
         run: |
           echo "Checking AWS identity..."
@@ -66,20 +66,24 @@ jobs:
 
 
       # ==================================================
-      # 4. Login to Amazon ECR
+      # 4. LOGIN TO ECR
       # ==================================================
+
       - name: Login to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
 
       # ==================================================
-      # 5. Build Docker image
+      # 5. BUILD IMAGE
       # ==================================================
+
       - name: Build Backend Docker Image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+
         run: |
+
           echo "========================================"
           echo "Building Backend Docker Image"
           echo "========================================"
@@ -88,31 +92,36 @@ jobs:
             -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             ./backend
 
-          echo "Docker image built successfully."
+          echo "Image build completed."
 
 
       # ==================================================
-      # 6. Push image to ECR
+      # 6. PUSH IMAGE TO ECR
       # ==================================================
+
       - name: Push Backend Image to ECR
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+
         run: |
+
           echo "========================================"
-          echo "Pushing Backend Image to ECR"
+          echo "Pushing Backend Image"
           echo "========================================"
 
           docker push \
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Backend image pushed successfully."
+          echo "Image pushed successfully."
 
 
       # ==================================================
-      # 7. Verify ECR image
+      # 7. VERIFY ECR IMAGE
       # ==================================================
+
       - name: Verify Backend Image
         run: |
+
           echo "========================================"
           echo "Verifying ECR Image"
           echo "========================================"
@@ -122,77 +131,82 @@ jobs:
             --image-ids imageTag="$IMAGE_TAG" \
             --region "$AWS_REGION"
 
-          echo "ECR image verified successfully."
+          echo "ECR image verified."
 
 
       # ==================================================
-      # 8. Start SSH Agent
-      #
-      # With ProxyJump (step 10) the runner's agent
-      # authenticates BOTH hops locally, so `-A` (agent
-      # forwarding onto the bastion / private host) is not
-      # needed and is intentionally avoided.
+      # 8. START SSH AGENT
       # ==================================================
+
       - name: Start SSH Agent
         uses: webfactory/ssh-agent@v0.9.1
+
         with:
           ssh-private-key: ${{ secrets.BASTION_SSH_PRIVATE_KEY }}
 
 
       # ==================================================
-      # 9. Verify SSH key
+      # 9. VERIFY SSH KEY
       # ==================================================
+
       - name: Check SSH Agent
         run: |
+
           echo "Checking SSH agent..."
+
           ssh-add -l
 
 
       # ==================================================
-      # 10. Deploy through Bastion (ProxyJump, with rollback)
+      # 10. DEPLOY THROUGH BASTION
       # ==================================================
+
       - name: Deploy Backend Through Bastion
+
         env:
+
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+
+          # Database configuration
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
         run: |
 
           echo "========================================"
-          echo "Connecting to Backend Host via Bastion"
+          echo "Connecting to Backend EC2"
           echo "========================================"
 
           ssh \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=10 \
-            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 $BASTION_USER@${{ secrets.BASTION_HOST }}" \
+            -o ProxyCommand="ssh -W %h:%p \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=10 \
+              $BASTION_USER@${{ secrets.BASTION_HOST }}" \
             "$PRIVATE_EC2_USER@${{ secrets.BACKEND_PRIVATE_EC2_HOST }}" \
             'bash -s' <<REMOTE_EOF
 
           set -e
 
           echo "========================================"
-          echo "Backend Deployment Started"
+          echo "BACKEND DEPLOYMENT STARTED"
           echo "========================================"
 
-          echo "Backend Host:"
+          echo "Hostname:"
           hostname
 
           echo "Private IP:"
           hostname -I
 
-
-          # ==================================================
-          # Docker version
-          # ==================================================
-
-          echo "========================================"
-          echo "Docker Version"
-          echo "========================================"
-
+          echo "Docker version:"
           docker --version
 
 
           # ==================================================
-          # ECR Login
+          # ECR LOGIN
           # ==================================================
 
           echo "========================================"
@@ -209,66 +223,91 @@ jobs:
 
 
           # ==================================================
-          # Pull new image BEFORE touching the running container
+          # PULL NEW IMAGE
           # ==================================================
 
           echo "========================================"
-          echo "Pulling Backend Image"
+          echo "Pulling New Backend Image"
           echo "========================================"
 
           docker pull \
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Backend image pulled successfully."
+          echo "Image pulled successfully."
 
 
           # ==================================================
-          # Set aside the currently-running container instead
-          # of deleting it, so we can roll back if the new one
-          # fails its health check.
+          # REMOVE PREVIOUS ROLLBACK CONTAINER
           # ==================================================
 
           echo "========================================"
-          echo "Retiring Current Backend Container"
+          echo "Preparing Rollback Container"
           echo "========================================"
 
-          docker rm -f "$OLD_CONTAINER_NAME" 2>/dev/null || true
+          docker rm -f \
+            "$OLD_CONTAINER_NAME" \
+            2>/dev/null || true
+
+
+          # ==================================================
+          # SAVE CURRENT CONTAINER
+          # ==================================================
 
           if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+
+            echo "Existing backend container found."
+
             docker stop "$CONTAINER_NAME" || true
-            docker rename "$CONTAINER_NAME" "$OLD_CONTAINER_NAME"
-            echo "Existing container stopped and renamed to $OLD_CONTAINER_NAME."
+
+            docker rename \
+              "$CONTAINER_NAME" \
+              "$OLD_CONTAINER_NAME"
+
+            echo "Previous container saved as:"
+            echo "$OLD_CONTAINER_NAME"
+
           else
-            echo "No existing container found. Skipping."
+
+            echo "No existing backend container found."
+
           fi
 
 
           # ==================================================
-          # Check host port (HARD FAIL if occupied)
+          # CHECK PORT
           # ==================================================
 
           echo "========================================"
           echo "Checking Port $CONTAINER_PORT"
           echo "========================================"
 
-          if ss -ltnp | grep -q ":$CONTAINER_PORT "; then
-            echo "ERROR: Port $CONTAINER_PORT is still in use."
-            ss -ltnp | grep ":$CONTAINER_PORT " || true
+          if ss -lntp | grep -q ":$CONTAINER_PORT "; then
 
-            echo "Rolling back: restarting previous container."
+            echo "ERROR: Port $CONTAINER_PORT is still occupied."
+
+            ss -lntp | grep ":$CONTAINER_PORT " || true
+
+            echo "Attempting rollback..."
+
             if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
-              docker rename "$OLD_CONTAINER_NAME" "$CONTAINER_NAME"
+
+              docker rename \
+                "$OLD_CONTAINER_NAME" \
+                "$CONTAINER_NAME"
+
               docker start "$CONTAINER_NAME"
+
             fi
 
             exit 1
-          else
-            echo "Port $CONTAINER_PORT is available."
+
           fi
+
+          echo "Port $CONTAINER_PORT is available."
 
 
           # ==================================================
-          # Start new container
+          # START NEW CONTAINER
           # ==================================================
 
           echo "========================================"
@@ -279,28 +318,94 @@ jobs:
             --restart unless-stopped \
             --name "$CONTAINER_NAME" \
             -p "$CONTAINER_PORT:$CONTAINER_PORT" \
+            -e DB_HOST="$DB_HOST" \
+            -e DB_NAME="$DB_NAME" \
+            -e DB_USERNAME="$DB_USERNAME" \
+            -e DB_PASSWORD="$DB_PASSWORD" \
             "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Backend container started."
+          echo "New container started."
 
 
           # ==================================================
-          # Wait for the app to come up
-          # ==================================================
-
-          echo "========================================"
-          echo "Waiting for Backend"
-          echo "========================================"
-
-          sleep 20
-
-
-          # ==================================================
-          # Docker status
+          # WAIT FOR SPRING BOOT
           # ==================================================
 
           echo "========================================"
-          echo "Docker Container Status"
+          echo "Waiting for Spring Boot"
+          echo "========================================"
+
+          sleep 30
+
+
+          # ==================================================
+          # CHECK CONTAINER STATUS
+          # ==================================================
+
+          echo "========================================"
+          echo "Checking Container Status"
+          echo "========================================"
+
+          STATUS=\$(docker inspect \
+            -f '{{.State.Status}}' \
+            "$CONTAINER_NAME" \
+            2>/dev/null || echo "missing")
+
+          echo "Container status: \$STATUS"
+
+
+          if [ "\$STATUS" != "running" ]; then
+
+            echo "ERROR: Backend container is not running."
+
+            echo "========================================"
+            echo "Backend Logs"
+            echo "========================================"
+
+            docker logs \
+              "$CONTAINER_NAME" \
+              --tail 100 || true
+
+
+            echo "========================================"
+            echo "ROLLING BACK"
+            echo "========================================"
+
+            docker rm -f \
+              "$CONTAINER_NAME" \
+              2>/dev/null || true
+
+
+            if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
+
+              docker rename \
+                "$OLD_CONTAINER_NAME" \
+                "$CONTAINER_NAME"
+
+              docker start "$CONTAINER_NAME"
+
+              echo "Rollback successful."
+
+            else
+
+              echo "No previous container available."
+
+            fi
+
+            exit 1
+
+          fi
+
+
+          echo "Backend container is running."
+
+
+          # ==================================================
+          # SHOW CONTAINER
+          # ==================================================
+
+          echo "========================================"
+          echo "Docker Status"
           echo "========================================"
 
           docker ps \
@@ -308,66 +413,82 @@ jobs:
 
 
           # ==================================================
-          # Port mapping
+          # SHOW PORT
           # ==================================================
 
           echo "========================================"
-          echo "Container Port Mapping"
+          echo "Port Mapping"
           echo "========================================"
 
           docker port "$CONTAINER_NAME"
 
 
           # ==================================================
-          # Container logs
+          # SHOW LOGS
           # ==================================================
 
           echo "========================================"
-          echo "Backend Container Logs"
+          echo "Backend Logs"
           echo "========================================"
 
-          docker logs --tail 50 "$CONTAINER_NAME" || true
+          docker logs \
+            --tail 50 \
+            "$CONTAINER_NAME" || true
 
 
           # ==================================================
-          # Local health check, with automatic rollback
-          #
-          # NOTE: adjust the path below to your real health
-          # endpoint if you have one, e.g. /health or /actuator/health.
-          # A bare "/" only proves the process is listening, not
-          # that the app is fully healthy.
+          # APPLICATION HEALTH CHECK
           # ==================================================
 
           echo "========================================"
-          echo "Testing Backend"
+          echo "Testing Backend Application"
           echo "========================================"
 
-          if curl -f http://localhost:$CONTAINER_PORT/ >/dev/null 2>&1; then
+          if curl \
+            --fail \
+            --silent \
+            --show-error \
+            "http://localhost:$CONTAINER_PORT/" \
+            >/dev/null; then
 
-            echo "Backend is responding on port $CONTAINER_PORT."
-
-            # New container is healthy: the old one is no longer needed.
-            docker rm -f "$OLD_CONTAINER_NAME" 2>/dev/null || true
-            echo "Old container removed."
+            echo "Backend application is responding."
 
           else
 
-            echo "ERROR: Backend is not responding on port $CONTAINER_PORT."
-            echo "Checking container logs..."
-            docker logs --tail 100 "$CONTAINER_NAME" || true
+            echo "ERROR: Backend application is not responding."
 
             echo "========================================"
-            echo "Rolling back to previous container"
+            echo "Backend Logs"
             echo "========================================"
 
-            docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+            docker logs \
+              --tail 100 \
+              "$CONTAINER_NAME" || true
+
+
+            echo "========================================"
+            echo "ROLLING BACK"
+            echo "========================================"
+
+            docker rm -f \
+              "$CONTAINER_NAME" \
+              2>/dev/null || true
+
 
             if docker inspect "$OLD_CONTAINER_NAME" >/dev/null 2>&1; then
-              docker rename "$OLD_CONTAINER_NAME" "$CONTAINER_NAME"
+
+              docker rename \
+                "$OLD_CONTAINER_NAME" \
+                "$CONTAINER_NAME"
+
               docker start "$CONTAINER_NAME"
-              echo "Rollback complete. Previous container restarted."
+
+              echo "Rollback successful."
+
             else
-              echo "WARNING: No previous container available to roll back to."
+
+              echo "No previous container available."
+
             fi
 
             exit 1
@@ -376,58 +497,78 @@ jobs:
 
 
           # ==================================================
-          # Clean up dangling images to avoid disk pressure
+          # SUCCESS - REMOVE OLD CONTAINER
           # ==================================================
 
           echo "========================================"
-          echo "Pruning Dangling Images"
+          echo "New Backend Is Healthy"
+          echo "========================================"
+
+          docker rm -f \
+            "$OLD_CONTAINER_NAME" \
+            2>/dev/null || true
+
+          echo "Old container removed."
+
+
+          # ==================================================
+          # CLEAN DANGLING IMAGES
+          # ==================================================
+
+          echo "========================================"
+          echo "Cleaning Dangling Images"
           echo "========================================"
 
           docker image prune -f || true
 
 
           # ==================================================
-          # Final status
+          # FINAL
           # ==================================================
 
           echo "========================================"
-          echo "Backend Deployment Completed"
+          echo "BACKEND DEPLOYMENT SUCCESSFUL"
           echo "========================================"
 
-          echo "Container Port : $CONTAINER_PORT"
-          echo "Image          : $IMAGE_TAG"
+          echo "Repository : $ECR_REPOSITORY"
+          echo "Image Tag  : $IMAGE_TAG"
+          echo "Port       : $CONTAINER_PORT"
 
           REMOTE_EOF
 
 
       # ==================================================
-      # 11. Success
+      # 11. SUCCESS
       # ==================================================
+
       - name: Backend Deployment Successful
         if: success()
+
         run: |
+
           echo "========================================"
-          echo "Backend Deployment Successful"
+          echo "BACKEND DEPLOYMENT SUCCESSFUL"
           echo "========================================"
 
-          echo "Repository      : $ECR_REPOSITORY"
-          echo "Image Tag       : $IMAGE_TAG"
-          echo "Container Port  : 8084"
+          echo "Repository     : $ECR_REPOSITORY"
+          echo "Image Tag      : $IMAGE_TAG"
+          echo "Container Port : $CONTAINER_PORT"
 
 
       # ==================================================
-      # 12. Failure
+      # 12. FAILURE
       # ==================================================
+
       - name: Backend Deployment Failed
         if: failure()
+
         run: |
+
           echo "========================================"
-          echo "Backend Deployment Failed"
+          echo "BACKEND DEPLOYMENT FAILED"
           echo "========================================"
 
-          echo "Check the GitHub Actions logs."
-          echo "If the health check failed remotely, the deploy step"
-          echo "already attempted to roll back to the previous container."
+          echo "Check GitHub Actions logs."
 
   # --------------------------------------------------
       # build through oidc docker container: 
